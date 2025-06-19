@@ -8,6 +8,7 @@ use std::path::Path;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::mpsc::channel;
 use glob::glob;
+use anyhow::{Result, Context};
 
 #[derive(Parser)]
 #[command(name = "demon")]
@@ -114,11 +115,11 @@ fn main() {
     }
 }
 
-fn run_command(command: Commands) -> Result<(), Box<dyn std::error::Error>> {
+fn run_command(command: Commands) -> Result<()> {
     match command {
         Commands::Run(args) => {
             if args.command.is_empty() {
-                return Err("Command cannot be empty".into());
+                return Err(anyhow::anyhow!("Command cannot be empty"));
             }
             run_daemon(&args.id, &args.command)
         }
@@ -147,14 +148,14 @@ fn run_command(command: Commands) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn run_daemon(id: &str, command: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_daemon(id: &str, command: &[String]) -> Result<()> {
     let pid_file = format!("{}.pid", id);
     let stdout_file = format!("{}.stdout", id);
     let stderr_file = format!("{}.stderr", id);
     
     // Check if process is already running
     if is_process_running(&pid_file)? {
-        return Err(format!("Process '{}' is already running", id).into());
+        return Err(anyhow::anyhow!("Process '{}' is already running", id));
     }
     
     tracing::info!("Starting daemon '{}' with command: {:?}", id, command);
@@ -177,7 +178,7 @@ fn run_daemon(id: &str, command: &[String]) -> Result<(), Box<dyn std::error::Er
         .stderr(Stdio::from(stderr_redirect))
         .stdin(Stdio::null())
         .spawn()
-        .map_err(|e| format!("Failed to start process '{}': {}", program, e))?;
+        .with_context(|| format!("Failed to start process '{}' with args {:?}", program, args))?;
     
     // Write PID to file
     let mut pid_file_handle = File::create(&pid_file)?;
@@ -191,7 +192,7 @@ fn run_daemon(id: &str, command: &[String]) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn is_process_running(pid_file: &str) -> Result<bool, Box<dyn std::error::Error>> {
+fn is_process_running(pid_file: &str) -> Result<bool> {
     // Try to read the PID file
     let mut file = match File::open(pid_file) {
         Ok(f) => f,
@@ -214,7 +215,7 @@ fn is_process_running(pid_file: &str) -> Result<bool, Box<dyn std::error::Error>
     Ok(output.status.success())
 }
 
-fn stop_daemon(id: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>> {
+fn stop_daemon(id: &str, timeout: u64) -> Result<()> {
     let pid_file = format!("{}.pid", id);
     
     // Check if PID file exists
@@ -255,7 +256,7 @@ fn stop_daemon(id: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>>
         .output()?;
     
     if !output.status.success() {
-        return Err(format!("Failed to send SIGTERM to PID {}", pid).into());
+        return Err(anyhow::anyhow!("Failed to send SIGTERM to PID {}", pid));
     }
     
     // Wait for the process to terminate
@@ -280,14 +281,14 @@ fn stop_daemon(id: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>>
         .output()?;
     
     if !output.status.success() {
-        return Err(format!("Failed to send SIGKILL to PID {}", pid).into());
+        return Err(anyhow::anyhow!("Failed to send SIGKILL to PID {}", pid));
     }
     
     // Wait a bit more for SIGKILL to take effect
     thread::sleep(Duration::from_secs(1));
     
     if is_process_running_by_pid(pid) {
-        return Err(format!("Process {} is still running after SIGKILL", pid).into());
+        return Err(anyhow::anyhow!("Process {} is still running after SIGKILL", pid));
     }
     
     println!("Process '{}' (PID: {}) terminated forcefully", id, pid);
@@ -307,7 +308,7 @@ fn is_process_running_by_pid(pid: u32) -> bool {
     }
 }
 
-fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
     let stdout_file = format!("{}.stdout", id);
     let stderr_file = format!("{}.stderr", id);
     
@@ -348,7 +349,7 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<(), Box<dy
     Ok(())
 }
 
-fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
     let stdout_file = format!("{}.stdout", id);
     let stderr_file = format!("{}.stderr", id);
     
@@ -464,7 +465,7 @@ fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<(), Box<d
     Ok(())
 }
 
-fn read_file_content(file: &mut File) -> Result<String, Box<dyn std::error::Error>> {
+fn read_file_content(file: &mut File) -> Result<String> {
     let mut content = String::new();
     file.read_to_string(&mut content)?;
     Ok(content)
@@ -474,7 +475,7 @@ fn handle_file_change(
     file_path: &str, 
     positions: &mut std::collections::HashMap<String, u64>,
     show_headers: bool
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let mut file = File::open(file_path)?;
     let current_pos = positions.get(file_path).copied().unwrap_or(0);
     
@@ -500,7 +501,7 @@ fn handle_file_change(
     Ok(())
 }
 
-fn list_daemons() -> Result<(), Box<dyn std::error::Error>> {
+fn list_daemons() -> Result<()> {
     println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATUS", "COMMAND");
     println!("{}", "-".repeat(50));
     
@@ -557,7 +558,7 @@ fn list_daemons() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn status_daemon(id: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn status_daemon(id: &str) -> Result<()> {
     let pid_file = format!("{}.pid", id);
     let stdout_file = format!("{}.stdout", id);
     let stderr_file = format!("{}.stderr", id);
@@ -614,7 +615,7 @@ fn status_daemon(id: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn clean_orphaned_files() -> Result<(), Box<dyn std::error::Error>> {
+fn clean_orphaned_files() -> Result<()> {
     tracing::info!("Scanning for orphaned daemon files...");
     
     let mut cleaned_count = 0;
