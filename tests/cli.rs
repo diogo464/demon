@@ -344,3 +344,36 @@ fn test_invalid_process_id() {
         .success()
         .stdout(predicate::str::contains("invalid PID file"));
 }
+
+#[test]
+fn test_list_quiet_mode() {
+    let temp_dir = TempDir::new().unwrap();
+    
+    // Test quiet mode with no processes
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["list", "--quiet"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+    
+    // Create a process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["run", "--id", "quiet-test", "echo", "done"])
+        .assert()
+        .success();
+    
+    // Test quiet mode with process - should output colon-separated format
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["list", "-q"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("quiet-test:"))
+        .stdout(predicate::str::contains(":DEAD"))
+        // Should not contain headers
+        .stdout(predicate::str::contains("ID").not())
+        .stdout(predicate::str::contains("PID").not())
+        .stdout(predicate::str::contains("STATUS").not());
+}

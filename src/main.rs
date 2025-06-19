@@ -35,7 +35,7 @@ enum Commands {
     Cat(CatArgs),
     
     /// List all running daemon processes
-    List,
+    List(ListArgs),
     
     /// Check status of a daemon process
     Status(StatusArgs),
@@ -96,6 +96,13 @@ struct CatArgs {
 }
 
 #[derive(Args)]
+struct ListArgs {
+    /// Quiet mode - output only process data without headers
+    #[arg(short, long)]
+    quiet: bool,
+}
+
+#[derive(Args)]
 struct StatusArgs {
     /// Process identifier
     #[arg(long)]
@@ -136,8 +143,8 @@ fn run_command(command: Commands) -> Result<()> {
             let show_stderr = !args.stdout || args.stderr;
             cat_logs(&args.id, show_stdout, show_stderr)
         }
-        Commands::List => {
-            list_daemons()
+        Commands::List(args) => {
+            list_daemons(args.quiet)
         }
         Commands::Status(args) => {
             status_daemon(&args.id)
@@ -501,9 +508,11 @@ fn handle_file_change(
     Ok(())
 }
 
-fn list_daemons() -> Result<()> {
-    println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATUS", "COMMAND");
-    println!("{}", "-".repeat(50));
+fn list_daemons(quiet: bool) -> Result<()> {
+    if !quiet {
+        println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATUS", "COMMAND");
+        println!("{}", "-".repeat(50));
+    }
     
     let mut found_any = false;
     
@@ -529,19 +538,30 @@ fn list_daemons() -> Result<()> {
                                     "DEAD"
                                 };
                                 
-                                // Try to read command from a hypothetical command file
-                                // For now, we'll just show "N/A" since we don't store the command
-                                let command = "N/A";
-                                
-                                println!("{:<20} {:<8} {:<10} {}", id, pid, status, command);
+                                if quiet {
+                                    println!("{}:{}:{}", id, pid, status);
+                                } else {
+                                    // Try to read command from a hypothetical command file
+                                    // For now, we'll just show "N/A" since we don't store the command
+                                    let command = "N/A";
+                                    println!("{:<20} {:<8} {:<10} {}", id, pid, status, command);
+                                }
                             }
                             Err(_) => {
-                                println!("{:<20} {:<8} {:<10} {}", id, "INVALID", "ERROR", "Invalid PID file");
+                                if quiet {
+                                    println!("{}:INVALID:ERROR", id);
+                                } else {
+                                    println!("{:<20} {:<8} {:<10} {}", id, "INVALID", "ERROR", "Invalid PID file");
+                                }
                             }
                         }
                     }
                     Err(e) => {
-                        println!("{:<20} {:<8} {:<10} {}", id, "ERROR", "ERROR", format!("Cannot read: {}", e));
+                        if quiet {
+                            println!("{}:ERROR:ERROR", id);
+                        } else {
+                            println!("{:<20} {:<8} {:<10} {}", id, "ERROR", "ERROR", format!("Cannot read: {}", e));
+                        }
                     }
                 }
             }
@@ -551,7 +571,7 @@ fn list_daemons() -> Result<()> {
         }
     }
     
-    if !found_any {
+    if !found_any && !quiet {
         println!("No daemon processes found.");
     }
     
