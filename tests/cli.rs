@@ -32,7 +32,7 @@ fn test_version_output() {
 #[test]
 fn test_run_missing_command() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "test"])
@@ -44,19 +44,19 @@ fn test_run_missing_command() {
 #[test]
 fn test_run_creates_files() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "test", "echo", "hello"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Started daemon 'test'"));
-    
+
     // Verify files were created
     assert!(temp_dir.path().join("test.pid").exists());
     assert!(temp_dir.path().join("test.stdout").exists());
     assert!(temp_dir.path().join("test.stderr").exists());
-    
+
     // Check that stdout contains our output
     let stdout_content = fs::read_to_string(temp_dir.path().join("test.stdout")).unwrap();
     assert_eq!(stdout_content.trim(), "hello");
@@ -65,14 +65,14 @@ fn test_run_creates_files() {
 #[test]
 fn test_run_duplicate_process() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Start a long-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "long", "sleep", "30"])
         .assert()
         .success();
-    
+
     // Try to start another with the same ID
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -80,7 +80,7 @@ fn test_run_duplicate_process() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("already running"));
-    
+
     // Clean up the running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -92,7 +92,7 @@ fn test_run_duplicate_process() {
 #[test]
 fn test_list_empty() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["list"])
@@ -107,14 +107,14 @@ fn test_list_empty() {
 #[test]
 fn test_list_with_processes() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Start a process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "test", "echo", "done"])
         .assert()
         .success();
-    
+
     // List processes
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -128,17 +128,22 @@ fn test_list_with_processes() {
 #[test]
 fn test_cat_output() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create a process with output
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&[
-            "run", "--id", "test", "--",
-            "sh", "-c", "echo 'stdout line'; echo 'stderr line' >&2"
+            "run",
+            "--id",
+            "test",
+            "--",
+            "sh",
+            "-c",
+            "echo 'stdout line'; echo 'stderr line' >&2",
         ])
         .assert()
         .success();
-    
+
     // Cat the output
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -152,17 +157,22 @@ fn test_cat_output() {
 #[test]
 fn test_cat_stdout_only() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create a process with output
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&[
-            "run", "--id", "test", "--",
-            "sh", "-c", "echo 'stdout line'; echo 'stderr line' >&2"
+            "run",
+            "--id",
+            "test",
+            "--",
+            "sh",
+            "-c",
+            "echo 'stdout line'; echo 'stderr line' >&2",
         ])
         .assert()
         .success();
-    
+
     // Cat only stdout
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -176,7 +186,7 @@ fn test_cat_stdout_only() {
 #[test]
 fn test_status_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["status", "--id", "nonexistent"])
@@ -188,14 +198,14 @@ fn test_status_nonexistent() {
 #[test]
 fn test_status_dead_process() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create a short-lived process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "dead", "echo", "hello"])
         .assert()
         .success();
-    
+
     // Check its status (should be dead)
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -208,7 +218,7 @@ fn test_status_dead_process() {
 #[test]
 fn test_stop_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["stop", "--id", "nonexistent"])
@@ -220,14 +230,14 @@ fn test_stop_nonexistent() {
 #[test]
 fn test_stop_process() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Start a long-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "long", "sleep", "10"])
         .assert()
         .success();
-    
+
     // Stop it
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -235,7 +245,7 @@ fn test_stop_process() {
         .assert()
         .success()
         .stdout(predicate::str::contains("terminated gracefully"));
-    
+
     // Verify PID file is gone
     assert!(!temp_dir.path().join("long.pid").exists());
 }
@@ -243,7 +253,7 @@ fn test_stop_process() {
 #[test]
 fn test_clean_no_orphans() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["clean"])
@@ -255,14 +265,14 @@ fn test_clean_no_orphans() {
 #[test]
 fn test_clean_with_orphans() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create a dead process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "dead", "echo", "hello"])
         .assert()
         .success();
-    
+
     // Clean up orphaned files
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -271,7 +281,7 @@ fn test_clean_with_orphans() {
         .success()
         .stdout(predicate::str::contains("Cleaned up"))
         .stdout(predicate::str::contains("orphaned"));
-    
+
     // Verify files are gone
     assert!(!temp_dir.path().join("dead.pid").exists());
     assert!(!temp_dir.path().join("dead.stdout").exists());
@@ -281,19 +291,24 @@ fn test_clean_with_orphans() {
 #[test]
 fn test_run_with_complex_command() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&[
-            "run", "--id", "complex", "--",
-            "sh", "-c", "for i in 1 2 3; do echo \"line $i\"; done"
+            "run",
+            "--id",
+            "complex",
+            "--",
+            "sh",
+            "-c",
+            "for i in 1 2 3; do echo \"line $i\"; done",
         ])
         .assert()
         .success();
-    
+
     // Give the process a moment to complete
     std::thread::sleep(Duration::from_millis(100));
-    
+
     // Check the output contains all lines
     let stdout_content = fs::read_to_string(temp_dir.path().join("complex.stdout")).unwrap();
     assert!(stdout_content.contains("line 1"));
@@ -304,14 +319,14 @@ fn test_run_with_complex_command() {
 #[test]
 fn test_timeout_configuration() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Start a process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "timeout-test", "sleep", "5"])
         .assert()
         .success();
-    
+
     // Stop with custom timeout (should work normally since sleep responds to SIGTERM)
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -324,10 +339,10 @@ fn test_timeout_configuration() {
 #[test]
 fn test_invalid_process_id() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create an invalid PID file
     fs::write(temp_dir.path().join("invalid.pid"), "not-a-number").unwrap();
-    
+
     // Status should handle it gracefully
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -335,7 +350,7 @@ fn test_invalid_process_id() {
         .assert()
         .success()
         .stdout(predicate::str::contains("ERROR"));
-    
+
     // Clean should remove it
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -348,7 +363,7 @@ fn test_invalid_process_id() {
 #[test]
 fn test_list_quiet_mode() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test quiet mode with no processes
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -356,14 +371,14 @@ fn test_list_quiet_mode() {
         .assert()
         .success()
         .stdout(predicate::str::is_empty());
-    
+
     // Create a process
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
         .args(&["run", "--id", "quiet-test", "echo", "done"])
         .assert()
         .success();
-    
+
     // Test quiet mode with process - should output colon-separated format
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.current_dir(temp_dir.path())
@@ -384,7 +399,9 @@ fn test_llm_command() {
     cmd.args(&["llm"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("# Demon - Daemon Process Management CLI"))
+        .stdout(predicate::str::contains(
+            "# Demon - Daemon Process Management CLI",
+        ))
         .stdout(predicate::str::contains("## Available Commands"))
         .stdout(predicate::str::contains("demon run"))
         .stdout(predicate::str::contains("demon stop"))
