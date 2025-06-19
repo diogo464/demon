@@ -117,6 +117,20 @@ demon cat web-server
 demon cat web-server --stdout
 ```
 
+### `demon wait <id> [--timeout <seconds>] [--interval <seconds>]`
+Wait for a daemon process to terminate.
+
+```bash
+# Wait with default 30-second timeout
+demon wait web-server
+
+# Wait indefinitely 
+demon wait web-server --timeout 0
+
+# Wait with custom timeout and polling interval
+demon wait web-server --timeout 60 --interval 2
+```
+
 ### `demon clean`
 Remove orphaned files from processes that are no longer running.
 
@@ -145,6 +159,9 @@ demon run db-server docker run -p 5432:5432 postgres
 # Monitor everything
 demon list
 demon tail api-server --stderr  # Watch for errors
+
+# Wait for a specific service to finish
+demon wait api-server
 ```
 
 ### LLM Agent Integration
@@ -153,6 +170,9 @@ Designed for seamless automation and LLM agent workflows:
 ```bash
 # Agents can start long-running processes
 demon run data-processor python process_large_dataset.py
+
+# Wait for the process to complete
+demon wait data-processor --timeout 3600  # 1 hour timeout
 
 # Check status programmatically
 if demon status data-processor | grep -q "RUNNING"; then
@@ -223,9 +243,7 @@ demon list --quiet
 demon list --quiet | grep -q "web-server:" || demon run web-server python -m http.server
 
 # Wait for process to finish
-while demon list --quiet | grep -q "backup-job:.*:RUNNING"; do
-    sleep 5
-done
+demon wait backup-job --timeout 0  # Wait indefinitely
 
 # Get all running processes
 demon list --quiet | grep ":RUNNING" | cut -d: -f1

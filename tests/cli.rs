@@ -17,7 +17,8 @@ fn test_help_output() {
         .stdout(predicate::str::contains("cat"))
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("status"))
-        .stdout(predicate::str::contains("clean"));
+        .stdout(predicate::str::contains("clean"))
+        .stdout(predicate::str::contains("wait"));
 }
 
 #[test]
@@ -410,7 +411,127 @@ fn test_llm_command() {
         .stdout(predicate::str::contains("demon cat"))
         .stdout(predicate::str::contains("demon status"))
         .stdout(predicate::str::contains("demon clean"))
+        .stdout(predicate::str::contains("demon wait"))
         .stdout(predicate::str::contains("Common Workflows"))
         .stdout(predicate::str::contains("Best Practices"))
         .stdout(predicate::str::contains("Integration Tips"));
+}
+
+#[test]
+fn test_wait_nonexistent_process() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["wait", "nonexistent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
+fn test_wait_already_dead_process() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a short-lived process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["run", "dead", "echo", "hello"])
+        .assert()
+        .success();
+
+    // Give it time to finish
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Try to wait for it (should fail since it's already dead)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["wait", "dead"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not running"));
+}
+
+#[test]
+fn test_wait_process_terminates() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Start a process that will run for 2 seconds
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["run", "short", "sleep", "2"])
+        .assert()
+        .success();
+
+    // Wait for it with a 5-second timeout (should succeed)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["wait", "short", "--timeout", "5"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_wait_timeout() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Start a long-running process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["run", "long", "sleep", "10"])
+        .assert()
+        .success();
+
+    // Wait with a very short timeout (should fail)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["wait", "long", "--timeout", "2"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Timeout reached"));
+
+    // Clean up the still-running process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["stop", "long"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_wait_infinite_timeout() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Start a short process that will finish quickly
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["run", "quick", "sleep", "1"])
+        .assert()
+        .success();
+
+    // Wait with infinite timeout (should succeed quickly)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["wait", "quick", "--timeout", "0"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_wait_custom_interval() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Start a short process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["run", "interval-test", "sleep", "2"])
+        .assert()
+        .success();
+
+    // Wait with custom interval (should still succeed)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.current_dir(temp_dir.path())
+        .args(&["wait", "interval-test", "--timeout", "5", "--interval", "2"])
+        .assert()
+        .success();
 }

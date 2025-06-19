@@ -142,6 +142,9 @@ enum Commands {
 
     /// Output comprehensive usage guide for LLMs
     Llm,
+
+    /// Wait for a daemon process to terminate
+    Wait(WaitArgs),
 }
 
 #[derive(Args)]
@@ -204,6 +207,20 @@ struct StatusArgs {
     id: String,
 }
 
+#[derive(Args)]
+struct WaitArgs {
+    /// Process identifier
+    id: String,
+
+    /// Timeout in seconds (0 = infinite)
+    #[arg(long, default_value = "30")]
+    timeout: u64,
+
+    /// Polling interval in seconds
+    #[arg(long, default_value = "1")]
+    interval: u64,
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -243,6 +260,7 @@ fn run_command(command: Commands) -> Result<()> {
             print_llm_guide();
             Ok(())
         }
+        Commands::Wait(args) => wait_daemon(&args.id, args.timeout, args.interval),
     }
 }
 
@@ -954,6 +972,28 @@ demon tail web-server           # Follow both logs
 demon tail web-server --stdout  # Follow only stdout
 ```
 
+### demon wait <id> [--timeout <seconds>] [--interval <seconds>]
+Blocks until a daemon process terminates.
+
+**Syntax**: `demon wait <id> [--timeout <seconds>] [--interval <seconds>]`
+
+**Behavior**:
+- Checks if PID file exists and process is running
+- Polls the process every `interval` seconds (default: 1 second)
+- Waits for up to `timeout` seconds (default: 30 seconds)
+- Use `--timeout 0` for infinite wait
+- Exits successfully when process terminates
+- Fails with error if process doesn't exist or timeout is reached
+- Does not clean up PID files (use `demon clean` for that)
+
+**Examples**:
+```bash
+demon wait web-server                      # Wait 30s for termination
+demon wait backup-job --timeout 0          # Wait indefinitely
+demon wait data-processor --timeout 3600   # Wait up to 1 hour
+demon wait short-task --interval 2         # Poll every 2 seconds
+```
+
 ### demon clean
 Removes orphaned files from processes that are no longer running.
 
@@ -994,6 +1034,13 @@ All files are created in the current working directory where `demon run` is exec
 demon run my-web-server python -m http.server 8080
 demon status my-web-server  # Check if it started
 demon tail my-web-server    # Monitor logs
+```
+
+### Waiting for Process Completion
+```bash
+demon run batch-job python process_data.py
+demon wait batch-job --timeout 600  # Wait up to 10 minutes
+demon cat batch-job                  # Check output after completion
 ```
 
 ### Running a Backup Job
@@ -1057,6 +1104,59 @@ demon list --quiet > process_status.txt
 
 This tool is designed for Linux environments and provides a simple interface for managing background processes with persistent logging."#
     );
+}
+
+fn wait_daemon(id: &str, timeout: u64, interval: u64) -> Result<()> {
+    let pid_file = format!("{}.pid", id);
+
+    // Check if PID file exists and read PID data
+    let pid_file_data = match PidFile::read_from_file(&pid_file) {
+        Ok(data) => data,
+        Err(PidFileReadError::FileNotFound) => {
+            return Err(anyhow::anyhow!("Process '{}' not found (no PID file)", id));
+        }
+        Err(PidFileReadError::FileInvalid(reason)) => {
+            return Err(anyhow::anyhow!("Process '{}' has invalid PID file: {}", id, reason));
+        }
+        Err(PidFileReadError::IoError(err)) => {
+            return Err(anyhow::anyhow!("Failed to read PID file for '{}': {}", id, err));
+        }
+    };
+
+    let pid = pid_file_data.pid;
+
+    // Check if process is currently running
+    if !is_process_running_by_pid(pid) {
+        return Err(anyhow::anyhow!("Process '{}' is not running", id));
+    }
+
+    tracing::info!("Waiting for process '{}' (PID: {}) to terminate", id, pid);
+
+    // Handle infinite timeout case
+    if timeout == 0 {
+        loop {
+            if !is_process_running_by_pid(pid) {
+                tracing::info!("Process '{}' (PID: {}) has terminated", id, pid);
+                return Ok(());
+            }
+            thread::sleep(Duration::from_secs(interval));
+        }
+    }
+
+    // Handle timeout case
+    let mut elapsed = 0;
+    while elapsed < timeout {
+        if !is_process_running_by_pid(pid) {
+            tracing::info!("Process '{}' (PID: {}) has terminated", id, pid);
+            return Ok(());
+        }
+        
+        thread::sleep(Duration::from_secs(interval));
+        elapsed += interval;
+    }
+
+    // Timeout reached
+    Err(anyhow::anyhow!("Timeout reached waiting for process '{}' to terminate", id))
 }
 
 fn find_pid_files() -> Result<Vec<std::fs::DirEntry>> {
