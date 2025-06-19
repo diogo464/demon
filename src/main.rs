@@ -144,7 +144,6 @@ enum Commands {
 #[derive(Args)]
 struct RunArgs {
     /// Process identifier
-    #[arg(long)]
     id: String,
 
     /// Command and arguments to execute
@@ -154,7 +153,6 @@ struct RunArgs {
 #[derive(Args)]
 struct StopArgs {
     /// Process identifier
-    #[arg(long)]
     id: String,
 
     /// Timeout in seconds before sending SIGKILL after SIGTERM
@@ -165,7 +163,6 @@ struct StopArgs {
 #[derive(Args)]
 struct TailArgs {
     /// Process identifier
-    #[arg(long)]
     id: String,
 
     /// Only tail stdout
@@ -180,7 +177,6 @@ struct TailArgs {
 #[derive(Args)]
 struct CatArgs {
     /// Process identifier
-    #[arg(long)]
     id: String,
 
     /// Only show stdout
@@ -202,7 +198,6 @@ struct ListArgs {
 #[derive(Args)]
 struct StatusArgs {
     /// Process identifier
-    #[arg(long)]
     id: String,
 }
 
@@ -843,10 +838,10 @@ Demon is a command-line tool for spawning, managing, and monitoring background p
 
 ## Available Commands
 
-### demon run --id <identifier> <command...>
+### demon run <identifier> <command...>
 Spawns a background process with the given identifier.
 
-**Syntax**: `demon run --id <id> [--] <command> [args...]`
+**Syntax**: `demon run <id> [--] <command> [args...]`
 
 **Behavior**:
 - Creates `<id>.pid`, `<id>.stdout`, `<id>.stderr` files
@@ -857,15 +852,15 @@ Spawns a background process with the given identifier.
 
 **Examples**:
 ```bash
-demon run --id web-server python -m http.server 8080
-demon run --id backup-job -- rsync -av /data/ /backup/
-demon run --id log-monitor tail -f /var/log/app.log
+demon run web-server python -m http.server 8080
+demon run backup-job -- rsync -av /data/ /backup/
+demon run log-monitor tail -f /var/log/app.log
 ```
 
-### demon stop --id <id> [--timeout <seconds>]
+### demon stop <id> [--timeout <seconds>]
 Stops a running daemon process gracefully.
 
-**Syntax**: `demon stop --id <id> [--timeout <seconds>]`
+**Syntax**: `demon stop <id> [--timeout <seconds>]`
 
 **Behavior**:
 - Sends SIGTERM to the process first
@@ -876,8 +871,8 @@ Stops a running daemon process gracefully.
 
 **Examples**:
 ```bash
-demon stop --id web-server
-demon stop --id backup-job --timeout 30
+demon stop web-server
+demon stop backup-job --timeout 30
 ```
 
 ### demon list [--quiet]
@@ -903,10 +898,10 @@ backup-job:12346:DEAD
 - `RUNNING`: Process is actively running
 - `DEAD`: Process has terminated, files still exist
 
-### demon status --id <id>
+### demon status <id>
 Shows detailed status information for a specific daemon.
 
-**Syntax**: `demon status --id <id>`
+**Syntax**: `demon status <id>`
 
 **Output includes**:
 - Daemon ID and PID file location
@@ -917,13 +912,13 @@ Shows detailed status information for a specific daemon.
 
 **Example**:
 ```bash
-demon status --id web-server
+demon status web-server
 ```
 
-### demon cat --id <id> [--stdout] [--stderr]
+### demon cat <id> [--stdout] [--stderr]
 Displays the contents of daemon log files.
 
-**Syntax**: `demon cat --id <id> [--stdout] [--stderr]`
+**Syntax**: `demon cat <id> [--stdout] [--stderr]`
 
 **Behavior**:
 - Shows both stdout and stderr by default
@@ -933,15 +928,15 @@ Displays the contents of daemon log files.
 
 **Examples**:
 ```bash
-demon cat --id web-server           # Show both logs
-demon cat --id web-server --stdout  # Show only stdout
-demon cat --id web-server --stderr  # Show only stderr
+demon cat web-server           # Show both logs
+demon cat web-server --stdout  # Show only stdout
+demon cat web-server --stderr  # Show only stderr
 ```
 
-### demon tail --id <id> [--stdout] [--stderr]
+### demon tail <id> [--stdout] [--stderr]
 Follows daemon log files in real-time (like `tail -f`).
 
-**Syntax**: `demon tail --id <id> [--stdout] [--stderr]`
+**Syntax**: `demon tail <id> [--stdout] [--stderr]`
 
 **Behavior**:
 - Shows existing content first, then follows new content
@@ -952,8 +947,8 @@ Follows daemon log files in real-time (like `tail -f`).
 
 **Examples**:
 ```bash
-demon tail --id web-server           # Follow both logs
-demon tail --id web-server --stdout  # Follow only stdout
+demon tail web-server           # Follow both logs
+demon tail web-server --stdout  # Follow only stdout
 ```
 
 ### demon clean
@@ -993,31 +988,31 @@ All files are created in the current working directory where `demon run` is exec
 
 ### Starting a Web Server
 ```bash
-demon run --id my-web-server python -m http.server 8080
-demon status --id my-web-server  # Check if it started
-demon tail --id my-web-server    # Monitor logs
+demon run my-web-server python -m http.server 8080
+demon status my-web-server  # Check if it started
+demon tail my-web-server    # Monitor logs
 ```
 
 ### Running a Backup Job
 ```bash
-demon run --id nightly-backup -- rsync -av /data/ /backup/
-demon cat --id nightly-backup   # Check output when done
+demon run nightly-backup -- rsync -av /data/ /backup/
+demon cat nightly-backup   # Check output when done
 demon clean                     # Clean up after completion
 ```
 
 ### Managing Multiple Services
 ```bash
-demon run --id api-server ./api --port 3000
-demon run --id worker-queue ./worker --config prod.conf
+demon run api-server ./api --port 3000
+demon run worker-queue ./worker --config prod.conf
 demon list                      # See all running services
-demon stop --id api-server      # Stop specific service
+demon stop api-server      # Stop specific service
 ```
 
 ### Monitoring and Debugging
 ```bash
 demon list --quiet | grep RUNNING  # Machine-readable active processes
-demon tail --id problematic-app --stderr  # Monitor just errors
-demon status --id failing-service         # Get detailed status
+demon tail problematic-app --stderr  # Monitor just errors
+demon status failing-service         # Get detailed status
 ```
 
 ## Error Handling
@@ -1040,12 +1035,12 @@ demon status --id failing-service         # Get detailed status
 ### Scripting
 ```bash
 # Check if service is running
-if demon status --id my-service | grep -q "RUNNING"; then
+if demon status my-service | grep -q "RUNNING"; then
     echo "Service is running"
 fi
 
 # Start service if not running
-demon list --quiet | grep -q "my-service:" || demon run --id my-service ./my-app
+demon list --quiet | grep -q "my-service:" || demon run my-service ./my-app
 
 # Get machine-readable process list
 demon list --quiet > process_status.txt
