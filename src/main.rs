@@ -7,7 +7,6 @@ use std::time::Duration;
 use std::path::Path;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::mpsc::channel;
-use glob::glob;
 use anyhow::{Result, Context};
 
 #[derive(Parser)]
@@ -524,56 +523,50 @@ fn list_daemons(quiet: bool) -> Result<()> {
     let mut found_any = false;
     
     // Find all .pid files in current directory
-    for entry in glob("*.pid")? {
-        match entry {
-            Ok(path) => {
-                found_any = true;
-                let path_str = path.to_string_lossy();
-                
-                // Extract ID from filename (remove .pid extension)
-                let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
-                
-                // Read PID from file
-                match std::fs::read_to_string(&path) {
-                    Ok(contents) => {
-                        let pid_str = contents.trim();
-                        match pid_str.parse::<u32>() {
-                            Ok(pid) => {
-                                let status = if is_process_running_by_pid(pid) {
-                                    "RUNNING"
-                                } else {
-                                    "DEAD"
-                                };
-                                
-                                if quiet {
-                                    println!("{}:{}:{}", id, pid, status);
-                                } else {
-                                    // Try to read command from a hypothetical command file
-                                    // For now, we'll just show "N/A" since we don't store the command
-                                    let command = "N/A";
-                                    println!("{:<20} {:<8} {:<10} {}", id, pid, status, command);
-                                }
-                            }
-                            Err(_) => {
-                                if quiet {
-                                    println!("{}:INVALID:ERROR", id);
-                                } else {
-                                    println!("{:<20} {:<8} {:<10} {}", id, "INVALID", "ERROR", "Invalid PID file");
-                                }
-                            }
+    for entry in find_pid_files()? {
+        found_any = true;
+        let path = entry.path();
+        let path_str = path.to_string_lossy();
+        
+        // Extract ID from filename (remove .pid extension)
+        let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
+        
+        // Read PID from file
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                let pid_str = contents.trim();
+                match pid_str.parse::<u32>() {
+                    Ok(pid) => {
+                        let status = if is_process_running_by_pid(pid) {
+                            "RUNNING"
+                        } else {
+                            "DEAD"
+                        };
+                        
+                        if quiet {
+                            println!("{}:{}:{}", id, pid, status);
+                        } else {
+                            // Try to read command from a hypothetical command file
+                            // For now, we'll just show "N/A" since we don't store the command
+                            let command = "N/A";
+                            println!("{:<20} {:<8} {:<10} {}", id, pid, status, command);
                         }
                     }
-                    Err(e) => {
+                    Err(_) => {
                         if quiet {
-                            println!("{}:ERROR:ERROR", id);
+                            println!("{}:INVALID:ERROR", id);
                         } else {
-                            println!("{:<20} {:<8} {:<10} {}", id, "ERROR", "ERROR", format!("Cannot read: {}", e));
+                            println!("{:<20} {:<8} {:<10} {}", id, "INVALID", "ERROR", "Invalid PID file");
                         }
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Error reading glob entry: {}", e);
+                if quiet {
+                    println!("{}:ERROR:ERROR", id);
+                } else {
+                    println!("{:<20} {:<8} {:<10} {}", id, "ERROR", "ERROR", format!("Cannot read: {}", e));
+                }
             }
         }
     }
@@ -648,78 +641,72 @@ fn clean_orphaned_files() -> Result<()> {
     let mut cleaned_count = 0;
     
     // Find all .pid files in current directory
-    for entry in glob("*.pid")? {
-        match entry {
-            Ok(path) => {
-                let path_str = path.to_string_lossy();
-                let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
-                
-                // Read PID from file
-                match std::fs::read_to_string(&path) {
-                    Ok(contents) => {
-                        let pid_str = contents.trim();
-                        match pid_str.parse::<u32>() {
-                            Ok(pid) => {
-                                // Check if process is still running
-                                if !is_process_running_by_pid(pid) {
-                                    println!("Cleaning up orphaned files for '{}' (PID: {})", id, pid);
-                                    
-                                    // Remove PID file
-                                    if let Err(e) = std::fs::remove_file(&path) {
-                                        tracing::warn!("Failed to remove {}: {}", path_str, e);
-                                    } else {
-                                        tracing::info!("Removed {}", path_str);
-                                    }
-                                    
-                                    // Remove stdout file if it exists
-                                    let stdout_file = format!("{}.stdout", id);
-                                    if Path::new(&stdout_file).exists() {
-                                        if let Err(e) = std::fs::remove_file(&stdout_file) {
-                                            tracing::warn!("Failed to remove {}: {}", stdout_file, e);
-                                        } else {
-                                            tracing::info!("Removed {}", stdout_file);
-                                        }
-                                    }
-                                    
-                                    // Remove stderr file if it exists
-                                    let stderr_file = format!("{}.stderr", id);
-                                    if Path::new(&stderr_file).exists() {
-                                        if let Err(e) = std::fs::remove_file(&stderr_file) {
-                                            tracing::warn!("Failed to remove {}: {}", stderr_file, e);
-                                        } else {
-                                            tracing::info!("Removed {}", stderr_file);
-                                        }
-                                    }
-                                    
-                                    cleaned_count += 1;
+    for entry in find_pid_files()? {
+        let path = entry.path();
+        let path_str = path.to_string_lossy();
+        let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
+        
+        // Read PID from file
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                let pid_str = contents.trim();
+                match pid_str.parse::<u32>() {
+                    Ok(pid) => {
+                        // Check if process is still running
+                        if !is_process_running_by_pid(pid) {
+                            println!("Cleaning up orphaned files for '{}' (PID: {})", id, pid);
+                            
+                            // Remove PID file
+                            if let Err(e) = std::fs::remove_file(&path) {
+                                tracing::warn!("Failed to remove {}: {}", path_str, e);
+                            } else {
+                                tracing::info!("Removed {}", path_str);
+                            }
+                            
+                            // Remove stdout file if it exists
+                            let stdout_file = format!("{}.stdout", id);
+                            if Path::new(&stdout_file).exists() {
+                                if let Err(e) = std::fs::remove_file(&stdout_file) {
+                                    tracing::warn!("Failed to remove {}: {}", stdout_file, e);
                                 } else {
-                                    tracing::info!("Skipping '{}' (PID: {}) - process is still running", id, pid);
+                                    tracing::info!("Removed {}", stdout_file);
                                 }
                             }
-                            Err(_) => {
-                                println!("Cleaning up invalid PID file: {}", path_str);
-                                if let Err(e) = std::fs::remove_file(&path) {
-                                    tracing::warn!("Failed to remove invalid PID file {}: {}", path_str, e);
+                            
+                            // Remove stderr file if it exists
+                            let stderr_file = format!("{}.stderr", id);
+                            if Path::new(&stderr_file).exists() {
+                                if let Err(e) = std::fs::remove_file(&stderr_file) {
+                                    tracing::warn!("Failed to remove {}: {}", stderr_file, e);
                                 } else {
-                                    tracing::info!("Removed invalid PID file {}", path_str);
-                                    cleaned_count += 1;
+                                    tracing::info!("Removed {}", stderr_file);
                                 }
                             }
+                            
+                            cleaned_count += 1;
+                        } else {
+                            tracing::info!("Skipping '{}' (PID: {}) - process is still running", id, pid);
                         }
                     }
                     Err(_) => {
-                        println!("Cleaning up unreadable PID file: {}", path_str);
+                        println!("Cleaning up invalid PID file: {}", path_str);
                         if let Err(e) = std::fs::remove_file(&path) {
-                            tracing::warn!("Failed to remove unreadable PID file {}: {}", path_str, e);
+                            tracing::warn!("Failed to remove invalid PID file {}: {}", path_str, e);
                         } else {
-                            tracing::info!("Removed unreadable PID file {}", path_str);
+                            tracing::info!("Removed invalid PID file {}", path_str);
                             cleaned_count += 1;
                         }
                     }
                 }
             }
-            Err(e) => {
-                tracing::warn!("Error reading glob entry: {}", e);
+            Err(_) => {
+                println!("Cleaning up unreadable PID file: {}", path_str);
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::warn!("Failed to remove unreadable PID file {}: {}", path_str, e);
+                } else {
+                    tracing::info!("Removed unreadable PID file {}", path_str);
+                    cleaned_count += 1;
+                }
             }
         }
     }
@@ -962,4 +949,19 @@ demon list --quiet > process_status.txt
 - Log rotation should be handled by the application itself
 
 This tool is designed for Linux environments and provides a simple interface for managing background processes with persistent logging."#);
+}
+
+fn find_pid_files() -> Result<Vec<std::fs::DirEntry>> {
+    let entries = std::fs::read_dir(".")?
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .filter(|ext| *ext == "pid")
+                    .map(|_| e)
+            })
+        })
+        .collect();
+    Ok(entries)
 }
