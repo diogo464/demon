@@ -11,20 +11,20 @@ use std::time::Duration;
 
 /// Represents the contents of a PID file
 #[derive(Debug, Clone)]
-struct PidFileData {
+struct PidFile {
     /// Process ID
     pid: u32,
     /// Command that was executed (program + arguments)
     command: Vec<String>,
 }
 
-impl PidFileData {
-    /// Create a new PidFileData instance
+impl PidFile {
+    /// Create a new PidFile instance
     fn new(pid: u32, command: Vec<String>) -> Self {
         Self { pid, command }
     }
 
-    /// Write PID file data to a file
+    /// Write PID file to a file
     fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self.pid)?;
@@ -34,7 +34,7 @@ impl PidFileData {
         Ok(())
     }
 
-    /// Read PID file data from a file
+    /// Read PID file from a file
     fn read_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         let lines: Vec<&str> = contents.lines().collect();
@@ -244,8 +244,8 @@ fn run_daemon(id: &str, command: &[String]) -> Result<()> {
         .with_context(|| format!("Failed to start process '{}' with args {:?}", program, args))?;
 
     // Write PID and command to file
-    let pid_data = PidFileData::new(child.id(), command.to_vec());
-    pid_data.write_to_file(&pid_file)?;
+    let pid_file_data = PidFile::new(child.id(), command.to_vec());
+    pid_file_data.write_to_file(&pid_file)?;
 
     // Don't wait for the child - let it run detached
     std::mem::forget(child);
@@ -261,14 +261,14 @@ fn is_process_running(pid_file: &str) -> Result<bool> {
         return Ok(false); // No PID file means no running process
     }
 
-    let pid_data = match PidFileData::read_from_file(pid_file) {
+    let pid_file_data = match PidFile::read_from_file(pid_file) {
         Ok(data) => data,
         Err(_) => return Ok(false), // Invalid PID file
     };
 
     // Check if process is still running using kill -0
     let output = Command::new("kill")
-        .args(&["-0", &pid_data.pid.to_string()])
+        .args(&["-0", &pid_file_data.pid.to_string()])
         .output()?;
 
     Ok(output.status.success())
@@ -278,7 +278,7 @@ fn stop_daemon(id: &str, timeout: u64) -> Result<()> {
     let pid_file = format!("{}.pid", id);
 
     // Check if PID file exists and read PID data
-    let pid_data = match PidFileData::read_from_file(&pid_file) {
+    let pid_file_data = match PidFile::read_from_file(&pid_file) {
         Ok(data) => data,
         Err(_) => {
             if Path::new(&pid_file).exists() {
@@ -291,7 +291,7 @@ fn stop_daemon(id: &str, timeout: u64) -> Result<()> {
         }
     };
 
-    let pid = pid_data.pid;
+    let pid = pid_file_data.pid;
 
     tracing::info!(
         "Stopping daemon '{}' (PID: {}) with timeout {}s",
@@ -599,19 +599,19 @@ fn list_daemons(quiet: bool) -> Result<()> {
         let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
 
         // Read PID data from file
-        match PidFileData::read_from_file(&path) {
-            Ok(pid_data) => {
-                let status = if is_process_running_by_pid(pid_data.pid) {
+        match PidFile::read_from_file(&path) {
+            Ok(pid_file_data) => {
+                let status = if is_process_running_by_pid(pid_file_data.pid) {
                     "RUNNING"
                 } else {
                     "DEAD"
                 };
 
                 if quiet {
-                    println!("{}:{}:{}", id, pid_data.pid, status);
+                    println!("{}:{}:{}", id, pid_file_data.pid, status);
                 } else {
-                    let command = pid_data.command_string();
-                    println!("{:<20} {:<8} {:<10} {}", id, pid_data.pid, status, command);
+                    let command = pid_file_data.command_string();
+                    println!("{:<20} {:<8} {:<10} {}", id, pid_file_data.pid, status, command);
                 }
             }
             Err(_) => {
@@ -649,12 +649,12 @@ fn status_daemon(id: &str) -> Result<()> {
     }
 
     // Read PID data from file
-    match PidFileData::read_from_file(&pid_file) {
-        Ok(pid_data) => {
-            println!("PID: {}", pid_data.pid);
-            println!("Command: {}", pid_data.command_string());
+    match PidFile::read_from_file(&pid_file) {
+        Ok(pid_file_data) => {
+            println!("PID: {}", pid_file_data.pid);
+            println!("Command: {}", pid_file_data.command_string());
 
-            if is_process_running_by_pid(pid_data.pid) {
+            if is_process_running_by_pid(pid_file_data.pid) {
                 println!("Status: RUNNING");
 
                 // Show file information
@@ -696,13 +696,13 @@ fn clean_orphaned_files() -> Result<()> {
         let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
 
         // Read PID data from file
-        match PidFileData::read_from_file(&path) {
-            Ok(pid_data) => {
+        match PidFile::read_from_file(&path) {
+            Ok(pid_file_data) => {
                 // Check if process is still running
-                if !is_process_running_by_pid(pid_data.pid) {
+                if !is_process_running_by_pid(pid_file_data.pid) {
                     println!(
                         "Cleaning up orphaned files for '{}' (PID: {})",
-                        id, pid_data.pid
+                        id, pid_file_data.pid
                     );
 
                     // Remove PID file
@@ -737,7 +737,7 @@ fn clean_orphaned_files() -> Result<()> {
                     tracing::info!(
                         "Skipping '{}' (PID: {}) - process is still running",
                         id,
-                        pid_data.pid
+                        pid_file_data.pid
                     );
                 }
             }
