@@ -178,6 +178,14 @@ struct TailArgs {
     /// Only tail stderr
     #[arg(long)]
     stderr: bool,
+
+    /// Follow mode - continuously watch for new content (like tail -f)
+    #[arg(short = 'f', long)]
+    follow: bool,
+
+    /// Number of lines to display from the end (default: 50)
+    #[arg(short = 'n', long, default_value = "50")]
+    lines: usize,
 }
 
 #[derive(Args)]
@@ -246,7 +254,7 @@ fn run_command(command: Commands) -> Result<()> {
         Commands::Tail(args) => {
             let show_stdout = !args.stderr || args.stdout;
             let show_stderr = !args.stdout || args.stderr;
-            tail_logs(&args.id, show_stdout, show_stderr)
+            tail_logs(&args.id, show_stdout, show_stderr, args.follow, args.lines)
         }
         Commands::Cat(args) => {
             let show_stdout = !args.stderr || args.stdout;
@@ -474,11 +482,44 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
     Ok(())
 }
 
-fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
+fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines: usize) -> Result<()> {
     let stdout_file = format!("{}.stdout", id);
     let stderr_file = format!("{}.stderr", id);
 
-    // First, display existing content and set up initial positions
+    if !follow {
+        // Non-follow mode: just show the last n lines and exit
+        let mut files_found = false;
+
+        if show_stdout && Path::new(&stdout_file).exists() {
+            let content = read_last_n_lines(&stdout_file, lines)?;
+            if !content.is_empty() {
+                files_found = true;
+                if show_stderr {
+                    println!("==> {} <==", stdout_file);
+                }
+                print!("{}", content);
+            }
+        }
+
+        if show_stderr && Path::new(&stderr_file).exists() {
+            let content = read_last_n_lines(&stderr_file, lines)?;
+            if !content.is_empty() {
+                files_found = true;
+                if show_stdout {
+                    println!("==> {} <==", stderr_file);
+                }
+                print!("{}", content);
+            }
+        }
+
+        if !files_found {
+            println!("No log files found for daemon '{}'", id);
+        }
+
+        return Ok(());
+    }
+
+    // Follow mode: original real-time monitoring behavior
     let mut file_positions: std::collections::HashMap<String, u64> =
         std::collections::HashMap::new();
 
@@ -606,6 +647,23 @@ fn read_file_content(file: &mut File) -> Result<String> {
     let mut content = String::new();
     file.read_to_string(&mut content)?;
     Ok(content)
+}
+
+fn read_last_n_lines(file_path: &str, n: usize) -> Result<String> {
+    let content = std::fs::read_to_string(file_path)?;
+    if content.is_empty() {
+        return Ok(String::new());
+    }
+    
+    let lines: Vec<&str> = content.lines().collect();
+    let start_index = if lines.len() > n {
+        lines.len() - n
+    } else {
+        0
+    };
+    
+    let last_lines: Vec<&str> = lines[start_index..].to_vec();
+    Ok(last_lines.join("\n") + if content.ends_with('\n') { "\n" } else { "" })
 }
 
 fn handle_file_change(
