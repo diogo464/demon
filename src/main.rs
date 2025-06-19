@@ -9,6 +9,60 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
+/// Represents the contents of a PID file
+#[derive(Debug, Clone)]
+struct PidFileData {
+    /// Process ID
+    pid: u32,
+    /// Command that was executed (program + arguments)
+    command: Vec<String>,
+}
+
+impl PidFileData {
+    /// Create a new PidFileData instance
+    fn new(pid: u32, command: Vec<String>) -> Self {
+        Self { pid, command }
+    }
+
+    /// Write PID file data to a file
+    fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let mut file = File::create(path)?;
+        writeln!(file, "{}", self.pid)?;
+        for arg in &self.command {
+            writeln!(file, "{}", arg)?;
+        }
+        Ok(())
+    }
+
+    /// Read PID file data from a file
+    fn read_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let contents = std::fs::read_to_string(path)?;
+        let lines: Vec<&str> = contents.lines().collect();
+
+        if lines.is_empty() {
+            return Err(anyhow::anyhow!("PID file is empty"));
+        }
+
+        let pid = lines[0]
+            .trim()
+            .parse::<u32>()
+            .context("Failed to parse PID from first line")?;
+
+        let command: Vec<String> = lines[1..].iter().map(|line| line.to_string()).collect();
+
+        if command.is_empty() {
+            return Err(anyhow::anyhow!("No command found in PID file"));
+        }
+
+        Ok(Self { pid, command })
+    }
+
+    /// Get the command as a formatted string for display
+    fn command_string(&self) -> String {
+        self.command.join(" ")
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "demon")]
 #[command(about = "A daemon process management CLI", long_about = None)]
@@ -189,9 +243,9 @@ fn run_daemon(id: &str, command: &[String]) -> Result<()> {
         .spawn()
         .with_context(|| format!("Failed to start process '{}' with args {:?}", program, args))?;
 
-    // Write PID to file
-    let mut pid_file_handle = File::create(&pid_file)?;
-    writeln!(pid_file_handle, "{}", child.id())?;
+    // Write PID and command to file
+    let pid_data = PidFileData::new(child.id(), command.to_vec());
+    pid_data.write_to_file(&pid_file)?;
 
     // Don't wait for the child - let it run detached
     std::mem::forget(child);
@@ -203,22 +257,18 @@ fn run_daemon(id: &str, command: &[String]) -> Result<()> {
 
 fn is_process_running(pid_file: &str) -> Result<bool> {
     // Try to read the PID file
-    let mut file = match File::open(pid_file) {
-        Ok(f) => f,
-        Err(_) => return Ok(false), // No PID file means no running process
-    };
+    if !Path::new(pid_file).exists() {
+        return Ok(false); // No PID file means no running process
+    }
 
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-
-    let pid: u32 = match contents.trim().parse() {
-        Ok(p) => p,
+    let pid_data = match PidFileData::read_from_file(pid_file) {
+        Ok(data) => data,
         Err(_) => return Ok(false), // Invalid PID file
     };
 
     // Check if process is still running using kill -0
     let output = Command::new("kill")
-        .args(&["-0", &pid.to_string()])
+        .args(&["-0", &pid_data.pid.to_string()])
         .output()?;
 
     Ok(output.status.success())
@@ -227,27 +277,21 @@ fn is_process_running(pid_file: &str) -> Result<bool> {
 fn stop_daemon(id: &str, timeout: u64) -> Result<()> {
     let pid_file = format!("{}.pid", id);
 
-    // Check if PID file exists
-    let mut file = match File::open(&pid_file) {
-        Ok(f) => f,
+    // Check if PID file exists and read PID data
+    let pid_data = match PidFileData::read_from_file(&pid_file) {
+        Ok(data) => data,
         Err(_) => {
-            println!("Process '{}' is not running (no PID file found)", id);
+            if Path::new(&pid_file).exists() {
+                println!("Process '{}': invalid PID file, removing it", id);
+                std::fs::remove_file(&pid_file)?;
+            } else {
+                println!("Process '{}' is not running (no PID file found)", id);
+            }
             return Ok(());
         }
     };
 
-    // Read PID
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-
-    let pid: u32 = match contents.trim().parse() {
-        Ok(p) => p,
-        Err(_) => {
-            println!("Process '{}': invalid PID file, removing it", id);
-            std::fs::remove_file(&pid_file)?;
-            return Ok(());
-        }
-    };
+    let pid = pid_data.pid;
 
     tracing::info!(
         "Stopping daemon '{}' (PID: {}) with timeout {}s",
@@ -554,49 +598,29 @@ fn list_daemons(quiet: bool) -> Result<()> {
         // Extract ID from filename (remove .pid extension)
         let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
 
-        // Read PID from file
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                let pid_str = contents.trim();
-                match pid_str.parse::<u32>() {
-                    Ok(pid) => {
-                        let status = if is_process_running_by_pid(pid) {
-                            "RUNNING"
-                        } else {
-                            "DEAD"
-                        };
+        // Read PID data from file
+        match PidFileData::read_from_file(&path) {
+            Ok(pid_data) => {
+                let status = if is_process_running_by_pid(pid_data.pid) {
+                    "RUNNING"
+                } else {
+                    "DEAD"
+                };
 
-                        if quiet {
-                            println!("{}:{}:{}", id, pid, status);
-                        } else {
-                            // Try to read command from a hypothetical command file
-                            // For now, we'll just show "N/A" since we don't store the command
-                            let command = "N/A";
-                            println!("{:<20} {:<8} {:<10} {}", id, pid, status, command);
-                        }
-                    }
-                    Err(_) => {
-                        if quiet {
-                            println!("{}:INVALID:ERROR", id);
-                        } else {
-                            println!(
-                                "{:<20} {:<8} {:<10} {}",
-                                id, "INVALID", "ERROR", "Invalid PID file"
-                            );
-                        }
-                    }
+                if quiet {
+                    println!("{}:{}:{}", id, pid_data.pid, status);
+                } else {
+                    let command = pid_data.command_string();
+                    println!("{:<20} {:<8} {:<10} {}", id, pid_data.pid, status, command);
                 }
             }
-            Err(e) => {
+            Err(_) => {
                 if quiet {
-                    println!("{}:ERROR:ERROR", id);
+                    println!("{}:INVALID:ERROR", id);
                 } else {
                     println!(
                         "{:<20} {:<8} {:<10} {}",
-                        id,
-                        "ERROR",
-                        "ERROR",
-                        format!("Cannot read: {}", e)
+                        id, "INVALID", "ERROR", "Invalid PID file"
                     );
                 }
             }
@@ -624,39 +648,32 @@ fn status_daemon(id: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Read PID from file
-    match std::fs::read_to_string(&pid_file) {
-        Ok(contents) => {
-            let pid_str = contents.trim();
-            match pid_str.parse::<u32>() {
-                Ok(pid) => {
-                    println!("PID: {}", pid);
+    // Read PID data from file
+    match PidFileData::read_from_file(&pid_file) {
+        Ok(pid_data) => {
+            println!("PID: {}", pid_data.pid);
+            println!("Command: {}", pid_data.command_string());
 
-                    if is_process_running_by_pid(pid) {
-                        println!("Status: RUNNING");
+            if is_process_running_by_pid(pid_data.pid) {
+                println!("Status: RUNNING");
 
-                        // Show file information
-                        if Path::new(&stdout_file).exists() {
-                            let metadata = std::fs::metadata(&stdout_file)?;
-                            println!("Stdout file: {} ({} bytes)", stdout_file, metadata.len());
-                        } else {
-                            println!("Stdout file: {} (not found)", stdout_file);
-                        }
-
-                        if Path::new(&stderr_file).exists() {
-                            let metadata = std::fs::metadata(&stderr_file)?;
-                            println!("Stderr file: {} ({} bytes)", stderr_file, metadata.len());
-                        } else {
-                            println!("Stderr file: {} (not found)", stderr_file);
-                        }
-                    } else {
-                        println!("Status: DEAD (process not running)");
-                        println!("Note: Use 'demon clean' to remove orphaned files");
-                    }
+                // Show file information
+                if Path::new(&stdout_file).exists() {
+                    let metadata = std::fs::metadata(&stdout_file)?;
+                    println!("Stdout file: {} ({} bytes)", stdout_file, metadata.len());
+                } else {
+                    println!("Stdout file: {} (not found)", stdout_file);
                 }
-                Err(_) => {
-                    println!("Status: ERROR (invalid PID in file)");
+
+                if Path::new(&stderr_file).exists() {
+                    let metadata = std::fs::metadata(&stderr_file)?;
+                    println!("Stderr file: {} ({} bytes)", stderr_file, metadata.len());
+                } else {
+                    println!("Stderr file: {} (not found)", stderr_file);
                 }
+            } else {
+                println!("Status: DEAD (process not running)");
+                println!("Note: Use 'demon clean' to remove orphaned files");
             }
         }
         Err(e) => {
@@ -678,69 +695,58 @@ fn clean_orphaned_files() -> Result<()> {
         let path_str = path.to_string_lossy();
         let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
 
-        // Read PID from file
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                let pid_str = contents.trim();
-                match pid_str.parse::<u32>() {
-                    Ok(pid) => {
-                        // Check if process is still running
-                        if !is_process_running_by_pid(pid) {
-                            println!("Cleaning up orphaned files for '{}' (PID: {})", id, pid);
+        // Read PID data from file
+        match PidFileData::read_from_file(&path) {
+            Ok(pid_data) => {
+                // Check if process is still running
+                if !is_process_running_by_pid(pid_data.pid) {
+                    println!(
+                        "Cleaning up orphaned files for '{}' (PID: {})",
+                        id, pid_data.pid
+                    );
 
-                            // Remove PID file
-                            if let Err(e) = std::fs::remove_file(&path) {
-                                tracing::warn!("Failed to remove {}: {}", path_str, e);
-                            } else {
-                                tracing::info!("Removed {}", path_str);
-                            }
+                    // Remove PID file
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        tracing::warn!("Failed to remove {}: {}", path_str, e);
+                    } else {
+                        tracing::info!("Removed {}", path_str);
+                    }
 
-                            // Remove stdout file if it exists
-                            let stdout_file = format!("{}.stdout", id);
-                            if Path::new(&stdout_file).exists() {
-                                if let Err(e) = std::fs::remove_file(&stdout_file) {
-                                    tracing::warn!("Failed to remove {}: {}", stdout_file, e);
-                                } else {
-                                    tracing::info!("Removed {}", stdout_file);
-                                }
-                            }
-
-                            // Remove stderr file if it exists
-                            let stderr_file = format!("{}.stderr", id);
-                            if Path::new(&stderr_file).exists() {
-                                if let Err(e) = std::fs::remove_file(&stderr_file) {
-                                    tracing::warn!("Failed to remove {}: {}", stderr_file, e);
-                                } else {
-                                    tracing::info!("Removed {}", stderr_file);
-                                }
-                            }
-
-                            cleaned_count += 1;
+                    // Remove stdout file if it exists
+                    let stdout_file = format!("{}.stdout", id);
+                    if Path::new(&stdout_file).exists() {
+                        if let Err(e) = std::fs::remove_file(&stdout_file) {
+                            tracing::warn!("Failed to remove {}: {}", stdout_file, e);
                         } else {
-                            tracing::info!(
-                                "Skipping '{}' (PID: {}) - process is still running",
-                                id,
-                                pid
-                            );
+                            tracing::info!("Removed {}", stdout_file);
                         }
                     }
-                    Err(_) => {
-                        println!("Cleaning up invalid PID file: {}", path_str);
-                        if let Err(e) = std::fs::remove_file(&path) {
-                            tracing::warn!("Failed to remove invalid PID file {}: {}", path_str, e);
+
+                    // Remove stderr file if it exists
+                    let stderr_file = format!("{}.stderr", id);
+                    if Path::new(&stderr_file).exists() {
+                        if let Err(e) = std::fs::remove_file(&stderr_file) {
+                            tracing::warn!("Failed to remove {}: {}", stderr_file, e);
                         } else {
-                            tracing::info!("Removed invalid PID file {}", path_str);
-                            cleaned_count += 1;
+                            tracing::info!("Removed {}", stderr_file);
                         }
                     }
+
+                    cleaned_count += 1;
+                } else {
+                    tracing::info!(
+                        "Skipping '{}' (PID: {}) - process is still running",
+                        id,
+                        pid_data.pid
+                    );
                 }
             }
             Err(_) => {
-                println!("Cleaning up unreadable PID file: {}", path_str);
+                println!("Cleaning up invalid PID file: {}", path_str);
                 if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!("Failed to remove unreadable PID file {}: {}", path_str, e);
+                    tracing::warn!("Failed to remove invalid PID file {}: {}", path_str, e);
                 } else {
-                    tracing::info!("Removed unreadable PID file {}", path_str);
+                    tracing::info!("Removed invalid PID file {}", path_str);
                     cleaned_count += 1;
                 }
             }
