@@ -9,6 +9,36 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
+/// Error types for reading PID files
+#[derive(Debug)]
+pub enum PidFileReadError {
+    /// The PID file does not exist
+    FileNotFound,
+    /// The PID file exists but has invalid content
+    FileInvalid(String),
+    /// IO error occurred while reading
+    IoError(std::io::Error),
+}
+
+impl std::fmt::Display for PidFileReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PidFileReadError::FileNotFound => write!(f, "PID file not found"),
+            PidFileReadError::FileInvalid(reason) => write!(f, "PID file invalid: {}", reason),
+            PidFileReadError::IoError(err) => write!(f, "IO error reading PID file: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for PidFileReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PidFileReadError::IoError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
 /// Represents the contents of a PID file
 #[derive(Debug, Clone)]
 struct PidFile {
@@ -35,23 +65,34 @@ impl PidFile {
     }
 
     /// Read PID file from a file
-    fn read_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)?;
+    fn read_from_file<P: AsRef<Path>>(path: P) -> Result<Self, PidFileReadError> {
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(err) => {
+                return if err.kind() == std::io::ErrorKind::NotFound {
+                    Err(PidFileReadError::FileNotFound)
+                } else {
+                    Err(PidFileReadError::IoError(err))
+                };
+            }
+        };
+
         let lines: Vec<&str> = contents.lines().collect();
 
         if lines.is_empty() {
-            return Err(anyhow::anyhow!("PID file is empty"));
+            return Err(PidFileReadError::FileInvalid("PID file is empty".to_string()));
         }
 
-        let pid = lines[0]
-            .trim()
-            .parse::<u32>()
-            .context("Failed to parse PID from first line")?;
+        let pid = lines[0].trim().parse::<u32>().map_err(|_| {
+            PidFileReadError::FileInvalid("Invalid PID on first line".to_string())
+        })?;
 
         let command: Vec<String> = lines[1..].iter().map(|line| line.to_string()).collect();
 
         if command.is_empty() {
-            return Err(anyhow::anyhow!("No command found in PID file"));
+            return Err(PidFileReadError::FileInvalid(
+                "No command found in PID file".to_string(),
+            ));
         }
 
         Ok(Self { pid, command })
@@ -256,14 +297,11 @@ fn run_daemon(id: &str, command: &[String]) -> Result<()> {
 }
 
 fn is_process_running(pid_file: &str) -> Result<bool> {
-    // Try to read the PID file
-    if !Path::new(pid_file).exists() {
-        return Ok(false); // No PID file means no running process
-    }
-
     let pid_file_data = match PidFile::read_from_file(pid_file) {
         Ok(data) => data,
-        Err(_) => return Ok(false), // Invalid PID file
+        Err(PidFileReadError::FileNotFound) => return Ok(false), // No PID file means no running process
+        Err(PidFileReadError::FileInvalid(_)) => return Ok(false), // Invalid PID file means no running process
+        Err(PidFileReadError::IoError(err)) => return Err(err.into()), // Propagate IO errors
     };
 
     // Check if process is still running using kill -0
@@ -280,14 +318,17 @@ fn stop_daemon(id: &str, timeout: u64) -> Result<()> {
     // Check if PID file exists and read PID data
     let pid_file_data = match PidFile::read_from_file(&pid_file) {
         Ok(data) => data,
-        Err(_) => {
-            if Path::new(&pid_file).exists() {
-                println!("Process '{}': invalid PID file, removing it", id);
-                std::fs::remove_file(&pid_file)?;
-            } else {
-                println!("Process '{}' is not running (no PID file found)", id);
-            }
+        Err(PidFileReadError::FileNotFound) => {
+            println!("Process '{}' is not running (no PID file found)", id);
             return Ok(());
+        }
+        Err(PidFileReadError::FileInvalid(_)) => {
+            println!("Process '{}': invalid PID file, removing it", id);
+            std::fs::remove_file(&pid_file)?;
+            return Ok(());
+        }
+        Err(PidFileReadError::IoError(err)) => {
+            return Err(anyhow::anyhow!("Failed to read PID file: {}", err));
         }
     };
 
@@ -614,13 +655,34 @@ fn list_daemons(quiet: bool) -> Result<()> {
                     println!("{:<20} {:<8} {:<10} {}", id, pid_file_data.pid, status, command);
                 }
             }
-            Err(_) => {
+            Err(PidFileReadError::FileNotFound) => {
+                // This shouldn't happen since we found the file, but handle gracefully
+                if quiet {
+                    println!("{}:NOTFOUND:ERROR", id);
+                } else {
+                    println!(
+                        "{:<20} {:<8} {:<10} {}",
+                        id, "NOTFOUND", "ERROR", "PID file disappeared"
+                    );
+                }
+            }
+            Err(PidFileReadError::FileInvalid(reason)) => {
                 if quiet {
                     println!("{}:INVALID:ERROR", id);
                 } else {
                     println!(
                         "{:<20} {:<8} {:<10} {}",
-                        id, "INVALID", "ERROR", "Invalid PID file"
+                        id, "INVALID", "ERROR", reason
+                    );
+                }
+            }
+            Err(PidFileReadError::IoError(_)) => {
+                if quiet {
+                    println!("{}:ERROR:ERROR", id);
+                } else {
+                    println!(
+                        "{:<20} {:<8} {:<10} {}",
+                        id, "ERROR", "ERROR", "Cannot read PID file"
                     );
                 }
             }
@@ -641,12 +703,6 @@ fn status_daemon(id: &str) -> Result<()> {
 
     println!("Daemon: {}", id);
     println!("PID file: {}", pid_file);
-
-    // Check if PID file exists
-    if !Path::new(&pid_file).exists() {
-        println!("Status: NOT FOUND (no PID file)");
-        return Ok(());
-    }
 
     // Read PID data from file
     match PidFile::read_from_file(&pid_file) {
@@ -676,8 +732,14 @@ fn status_daemon(id: &str) -> Result<()> {
                 println!("Note: Use 'demon clean' to remove orphaned files");
             }
         }
-        Err(e) => {
-            println!("Status: ERROR (cannot read PID file: {})", e);
+        Err(PidFileReadError::FileNotFound) => {
+            println!("Status: NOT FOUND (no PID file)");
+        }
+        Err(PidFileReadError::FileInvalid(reason)) => {
+            println!("Status: ERROR (invalid PID file: {})", reason);
+        }
+        Err(PidFileReadError::IoError(err)) => {
+            println!("Status: ERROR (cannot read PID file: {})", err);
         }
     }
 
@@ -741,7 +803,11 @@ fn clean_orphaned_files() -> Result<()> {
                     );
                 }
             }
-            Err(_) => {
+            Err(PidFileReadError::FileNotFound) => {
+                // This shouldn't happen since we found the file, but handle gracefully
+                tracing::warn!("PID file {} disappeared during processing", path_str);
+            }
+            Err(PidFileReadError::FileInvalid(_)) | Err(PidFileReadError::IoError(_)) => {
                 println!("Cleaning up invalid PID file: {}", path_str);
                 if let Err(e) = std::fs::remove_file(&path) {
                     tracing::warn!("Failed to remove invalid PID file {}: {}", path_str, e);

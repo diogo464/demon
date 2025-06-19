@@ -57,6 +57,9 @@ fn test_run_creates_files() {
     assert!(temp_dir.path().join("test.stdout").exists());
     assert!(temp_dir.path().join("test.stderr").exists());
 
+    // Give the process a moment to complete
+    std::thread::sleep(Duration::from_millis(100));
+
     // Check that stdout contains our output
     let stdout_content = fs::read_to_string(temp_dir.path().join("test.stdout")).unwrap();
     assert_eq!(stdout_content.trim(), "hello");
