@@ -377,3 +377,23 @@ fn test_list_quiet_mode() {
         .stdout(predicate::str::contains("PID").not())
         .stdout(predicate::str::contains("STATUS").not());
 }
+
+#[test]
+fn test_llm_command() {
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&["llm"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Demon - Daemon Process Management CLI"))
+        .stdout(predicate::str::contains("## Available Commands"))
+        .stdout(predicate::str::contains("demon run"))
+        .stdout(predicate::str::contains("demon stop"))
+        .stdout(predicate::str::contains("demon list"))
+        .stdout(predicate::str::contains("demon tail"))
+        .stdout(predicate::str::contains("demon cat"))
+        .stdout(predicate::str::contains("demon status"))
+        .stdout(predicate::str::contains("demon clean"))
+        .stdout(predicate::str::contains("Common Workflows"))
+        .stdout(predicate::str::contains("Best Practices"))
+        .stdout(predicate::str::contains("Integration Tips"));
+}

@@ -42,6 +42,9 @@ enum Commands {
     
     /// Clean up orphaned pid and log files
     Clean,
+    
+    /// Output comprehensive usage guide for LLMs
+    Llm,
 }
 
 #[derive(Args)]
@@ -151,6 +154,10 @@ fn run_command(command: Commands) -> Result<()> {
         }
         Commands::Clean => {
             clean_orphaned_files()
+        }
+        Commands::Llm => {
+            print_llm_guide();
+            Ok(())
         }
     }
 }
@@ -724,4 +731,235 @@ fn clean_orphaned_files() -> Result<()> {
     }
     
     Ok(())
+}
+
+fn print_llm_guide() {
+    println!(r#"# Demon - Daemon Process Management CLI
+
+## Overview
+Demon is a command-line tool for spawning, managing, and monitoring background processes (daemons) on Linux systems. It redirects process stdout/stderr to files and provides commands to control and observe these processes.
+
+## Core Concept
+- Each daemon is identified by a unique string ID
+- Three files are created per daemon: `<id>.pid`, `<id>.stdout`, `<id>.stderr`
+- Files are created in the current working directory
+- Processes run detached from the parent shell
+
+## Available Commands
+
+### demon run --id <identifier> <command...>
+Spawns a background process with the given identifier.
+
+**Syntax**: `demon run --id <id> [--] <command> [args...]`
+
+**Behavior**:
+- Creates `<id>.pid`, `<id>.stdout`, `<id>.stderr` files
+- Truncates log files if they already exist
+- Fails if a process with the same ID is already running
+- Parent process exits immediately, child continues in background
+- Use `--` to separate flags from command when command has flags
+
+**Examples**:
+```bash
+demon run --id web-server python -m http.server 8080
+demon run --id backup-job -- rsync -av /data/ /backup/
+demon run --id log-monitor tail -f /var/log/app.log
+```
+
+### demon stop --id <id> [--timeout <seconds>]
+Stops a running daemon process gracefully.
+
+**Syntax**: `demon stop --id <id> [--timeout <seconds>]`
+
+**Behavior**:
+- Sends SIGTERM to the process first
+- Waits for specified timeout (default: 10 seconds)
+- Sends SIGKILL if process doesn't terminate
+- Removes PID file after successful termination
+- Handles already-dead processes gracefully
+
+**Examples**:
+```bash
+demon stop --id web-server
+demon stop --id backup-job --timeout 30
+```
+
+### demon list [--quiet]
+Lists all managed daemon processes and their status.
+
+**Syntax**: `demon list [-q|--quiet]`
+
+**Normal Output Format**:
+```
+ID                   PID      STATUS     COMMAND
+--------------------------------------------------
+web-server           12345    RUNNING    N/A
+backup-job           12346    DEAD       N/A
+```
+
+**Quiet Output Format** (machine-readable):
+```
+web-server:12345:RUNNING
+backup-job:12346:DEAD
+```
+
+**Status Values**:
+- `RUNNING`: Process is actively running
+- `DEAD`: Process has terminated, files still exist
+
+### demon status --id <id>
+Shows detailed status information for a specific daemon.
+
+**Syntax**: `demon status --id <id>`
+
+**Output includes**:
+- Daemon ID and PID file location
+- Process ID (if available)
+- Current status (RUNNING/DEAD/NOT FOUND/ERROR)
+- Log file locations and sizes
+- Suggestions for cleanup if needed
+
+**Example**:
+```bash
+demon status --id web-server
+```
+
+### demon cat --id <id> [--stdout] [--stderr]
+Displays the contents of daemon log files.
+
+**Syntax**: `demon cat --id <id> [--stdout] [--stderr]`
+
+**Behavior**:
+- Shows both stdout and stderr by default
+- Use flags to show only specific streams
+- Displays file headers when showing multiple files
+- Handles missing files gracefully
+
+**Examples**:
+```bash
+demon cat --id web-server           # Show both logs
+demon cat --id web-server --stdout  # Show only stdout
+demon cat --id web-server --stderr  # Show only stderr
+```
+
+### demon tail --id <id> [--stdout] [--stderr]
+Follows daemon log files in real-time (like `tail -f`).
+
+**Syntax**: `demon tail --id <id> [--stdout] [--stderr]`
+
+**Behavior**:
+- Shows existing content first, then follows new content
+- Shows both stdout and stderr by default
+- Uses file system notifications for efficient monitoring
+- Press Ctrl+C to stop tailing
+- Handles file creation, rotation, and truncation
+
+**Examples**:
+```bash
+demon tail --id web-server           # Follow both logs
+demon tail --id web-server --stdout  # Follow only stdout
+```
+
+### demon clean
+Removes orphaned files from processes that are no longer running.
+
+**Syntax**: `demon clean`
+
+**Behavior**:
+- Scans for `.pid` files in current directory
+- Checks if corresponding processes are still running
+- Removes `.pid`, `.stdout`, `.stderr` files for dead processes
+- Handles invalid PID files gracefully
+- Reports what was cleaned up
+
+**Example**:
+```bash
+demon clean
+```
+
+## File Management
+
+### Created Files
+For each daemon with ID "example":
+- `example.pid`: Contains the process ID
+- `example.stdout`: Contains standard output from the process
+- `example.stderr`: Contains standard error from the process
+
+### File Locations
+All files are created in the current working directory where `demon run` is executed.
+
+### Cleanup
+- Files persist after process termination for inspection
+- Use `demon clean` to remove files from dead processes
+- Consider adding `*.pid`, `*.stdout`, `*.stderr` to `.gitignore`
+
+## Common Workflows
+
+### Starting a Web Server
+```bash
+demon run --id my-web-server python -m http.server 8080
+demon status --id my-web-server  # Check if it started
+demon tail --id my-web-server    # Monitor logs
+```
+
+### Running a Backup Job
+```bash
+demon run --id nightly-backup -- rsync -av /data/ /backup/
+demon cat --id nightly-backup   # Check output when done
+demon clean                     # Clean up after completion
+```
+
+### Managing Multiple Services
+```bash
+demon run --id api-server ./api --port 3000
+demon run --id worker-queue ./worker --config prod.conf
+demon list                      # See all running services
+demon stop --id api-server      # Stop specific service
+```
+
+### Monitoring and Debugging
+```bash
+demon list --quiet | grep RUNNING  # Machine-readable active processes
+demon tail --id problematic-app --stderr  # Monitor just errors
+demon status --id failing-service         # Get detailed status
+```
+
+## Error Handling
+
+### Common Error Scenarios
+- **"Process already running"**: Another process with the same ID exists
+- **"Command cannot be empty"**: No command specified after `--id`
+- **"Process not found"**: No PID file exists for the given ID
+- **"Failed to start process"**: Command not found or permission denied
+
+### Best Practices
+1. Use descriptive, unique IDs for each daemon
+2. Check status before starting to avoid conflicts
+3. Use `demon clean` periodically to remove old files
+4. Monitor logs with `demon tail` for debugging
+5. Use `--timeout` with stop for processes that may take time to shutdown
+
+## Integration Tips
+
+### Scripting
+```bash
+# Check if service is running
+if demon status --id my-service | grep -q "RUNNING"; then
+    echo "Service is running"
+fi
+
+# Start service if not running
+demon list --quiet | grep -q "my-service:" || demon run --id my-service ./my-app
+
+# Get machine-readable process list
+demon list --quiet > process_status.txt
+```
+
+### Process Management
+- Demon handles process detachment automatically
+- Processes continue running even if demon exits
+- Use standard Unix signals for process control
+- Log rotation should be handled by the application itself
+
+This tool is designed for Linux environments and provides a simple interface for managing background processes with persistent logging."#);
 }
