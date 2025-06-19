@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::channel;
 use std::thread;
@@ -117,6 +117,13 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Args)]
+struct Global {
+    /// Root directory for daemon files (pid, logs). If not specified, searches for git root.
+    #[arg(long, global = true)]
+    root_dir: Option<PathBuf>,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Spawn a background process and redirect stdout/stderr to files
@@ -138,7 +145,7 @@ enum Commands {
     Status(StatusArgs),
 
     /// Clean up orphaned pid and log files
-    Clean,
+    Clean(CleanArgs),
 
     /// Output comprehensive usage guide for LLMs
     Llm,
@@ -149,6 +156,9 @@ enum Commands {
 
 #[derive(Args)]
 struct RunArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Process identifier
     id: String,
 
@@ -158,6 +168,9 @@ struct RunArgs {
 
 #[derive(Args)]
 struct StopArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Process identifier
     id: String,
 
@@ -168,6 +181,9 @@ struct StopArgs {
 
 #[derive(Args)]
 struct TailArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Process identifier
     id: String,
 
@@ -190,6 +206,9 @@ struct TailArgs {
 
 #[derive(Args)]
 struct CatArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Process identifier
     id: String,
 
@@ -204,6 +223,9 @@ struct CatArgs {
 
 #[derive(Args)]
 struct ListArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Quiet mode - output only process data without headers
     #[arg(short, long)]
     quiet: bool,
@@ -211,12 +233,24 @@ struct ListArgs {
 
 #[derive(Args)]
 struct StatusArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Process identifier
     id: String,
 }
 
 #[derive(Args)]
+struct CleanArgs {
+    #[clap(flatten)]
+    global: Global,
+}
+
+#[derive(Args)]
 struct WaitArgs {
+    #[clap(flatten)]
+    global: Global,
+
     /// Process identifier
     id: String,
 
@@ -248,34 +282,89 @@ fn run_command(command: Commands) -> Result<()> {
             if args.command.is_empty() {
                 return Err(anyhow::anyhow!("Command cannot be empty"));
             }
-            run_daemon(&args.id, &args.command)
+            let root_dir = resolve_root_dir(&args.global)?;
+            run_daemon(&args.id, &args.command, &root_dir)
         }
-        Commands::Stop(args) => stop_daemon(&args.id, args.timeout),
+        Commands::Stop(args) => {
+            let root_dir = resolve_root_dir(&args.global)?;
+            stop_daemon(&args.id, args.timeout, &root_dir)
+        }
         Commands::Tail(args) => {
             let show_stdout = !args.stderr || args.stdout;
             let show_stderr = !args.stdout || args.stderr;
-            tail_logs(&args.id, show_stdout, show_stderr, args.follow, args.lines)
+            let root_dir = resolve_root_dir(&args.global)?;
+            tail_logs(&args.id, show_stdout, show_stderr, args.follow, args.lines, &root_dir)
         }
         Commands::Cat(args) => {
             let show_stdout = !args.stderr || args.stdout;
             let show_stderr = !args.stdout || args.stderr;
-            cat_logs(&args.id, show_stdout, show_stderr)
+            let root_dir = resolve_root_dir(&args.global)?;
+            cat_logs(&args.id, show_stdout, show_stderr, &root_dir)
         }
-        Commands::List(args) => list_daemons(args.quiet),
-        Commands::Status(args) => status_daemon(&args.id),
-        Commands::Clean => clean_orphaned_files(),
+        Commands::List(args) => {
+            let root_dir = resolve_root_dir(&args.global)?;
+            list_daemons(args.quiet, &root_dir)
+        }
+        Commands::Status(args) => {
+            let root_dir = resolve_root_dir(&args.global)?;
+            status_daemon(&args.id, &root_dir)
+        }
+        Commands::Clean(args) => {
+            let root_dir = resolve_root_dir(&args.global)?;
+            clean_orphaned_files(&root_dir)
+        }
         Commands::Llm => {
             print_llm_guide();
             Ok(())
         }
-        Commands::Wait(args) => wait_daemon(&args.id, args.timeout, args.interval),
+        Commands::Wait(args) => {
+            let root_dir = resolve_root_dir(&args.global)?;
+            wait_daemon(&args.id, args.timeout, args.interval, &root_dir)
+        }
     }
 }
 
-fn run_daemon(id: &str, command: &[String]) -> Result<()> {
-    let pid_file = format!("{}.pid", id);
-    let stdout_file = format!("{}.stdout", id);
-    let stderr_file = format!("{}.stderr", id);
+fn find_git_root() -> Result<PathBuf> {
+    let mut current = std::env::current_dir()?;
+    
+    loop {
+        let git_path = current.join(".git");
+        if git_path.exists() {
+            return Ok(current);
+        }
+        
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => return Err(anyhow::anyhow!(
+                "No git repository found. Please specify --root-dir or run from within a git repository"
+            )),
+        }
+    }
+}
+
+fn resolve_root_dir(global: &Global) -> Result<PathBuf> {
+    match &global.root_dir {
+        Some(dir) => {
+            if !dir.exists() {
+                return Err(anyhow::anyhow!("Specified root directory does not exist: {}", dir.display()));
+            }
+            if !dir.is_dir() {
+                return Err(anyhow::anyhow!("Specified root path is not a directory: {}", dir.display()));
+            }
+            Ok(dir.clone())
+        },
+        None => find_git_root(),
+    }
+}
+
+fn build_file_path(root_dir: &Path, id: &str, extension: &str) -> PathBuf {
+    root_dir.join(format!("{}.{}", id, extension))
+}
+
+fn run_daemon(id: &str, command: &[String], root_dir: &Path) -> Result<()> {
+    let pid_file = build_file_path(root_dir, id, "pid");
+    let stdout_file = build_file_path(root_dir, id, "stdout");
+    let stderr_file = build_file_path(root_dir, id, "stderr");
 
     // Check if process is already running
     if is_process_running(&pid_file)? {
@@ -315,12 +404,12 @@ fn run_daemon(id: &str, command: &[String]) -> Result<()> {
     // Don't wait for the child - let it run detached
     std::mem::forget(child);
 
-    println!("Started daemon '{}' with PID written to {}", id, pid_file);
+    println!("Started daemon '{}' with PID written to {}", id, pid_file.display());
 
     Ok(())
 }
 
-fn is_process_running(pid_file: &str) -> Result<bool> {
+fn is_process_running<P: AsRef<Path>>(pid_file: P) -> Result<bool> {
     let pid_file_data = match PidFile::read_from_file(pid_file) {
         Ok(data) => data,
         Err(PidFileReadError::FileNotFound) => return Ok(false), // No PID file means no running process
@@ -336,8 +425,8 @@ fn is_process_running(pid_file: &str) -> Result<bool> {
     Ok(output.status.success())
 }
 
-fn stop_daemon(id: &str, timeout: u64) -> Result<()> {
-    let pid_file = format!("{}.pid", id);
+fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
+    let pid_file = build_file_path(root_dir, id, "pid");
 
     // Check if PID file exists and read PID data
     let pid_file_data = match PidFile::read_from_file(&pid_file) {
@@ -441,9 +530,9 @@ fn is_process_running_by_pid(pid: u32) -> bool {
     }
 }
 
-fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
-    let stdout_file = format!("{}.stdout", id);
-    let stderr_file = format!("{}.stderr", id);
+fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool, root_dir: &Path) -> Result<()> {
+    let stdout_file = build_file_path(root_dir, id, "stdout");
+    let stderr_file = build_file_path(root_dir, id, "stderr");
 
     let mut files_found = false;
 
@@ -452,12 +541,12 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
             if !contents.is_empty() {
                 files_found = true;
                 if show_stderr {
-                    println!("==> {} <==", stdout_file);
+                    println!("==> {} <==", stdout_file.display());
                 }
                 print!("{}", contents);
             }
         } else {
-            tracing::warn!("Could not read {}", stdout_file);
+            tracing::warn!("Could not read {}", stdout_file.display());
         }
     }
 
@@ -466,12 +555,12 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
             if !contents.is_empty() {
                 files_found = true;
                 if show_stdout {
-                    println!("==> {} <==", stderr_file);
+                    println!("==> {} <==", stderr_file.display());
                 }
                 print!("{}", contents);
             }
         } else {
-            tracing::warn!("Could not read {}", stderr_file);
+            tracing::warn!("Could not read {}", stderr_file.display());
         }
     }
 
@@ -482,31 +571,38 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool) -> Result<()> {
     Ok(())
 }
 
-fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines: usize) -> Result<()> {
-    let stdout_file = format!("{}.stdout", id);
-    let stderr_file = format!("{}.stderr", id);
+fn tail_logs(
+    id: &str,
+    show_stdout: bool,
+    show_stderr: bool,
+    follow: bool,
+    lines: usize,
+    root_dir: &Path,
+) -> Result<()> {
+    let stdout_file = build_file_path(root_dir, id, "stdout");
+    let stderr_file = build_file_path(root_dir, id, "stderr");
 
     if !follow {
         // Non-follow mode: just show the last n lines and exit
         let mut files_found = false;
 
-        if show_stdout && Path::new(&stdout_file).exists() {
+        if show_stdout && stdout_file.exists() {
             let content = read_last_n_lines(&stdout_file, lines)?;
             if !content.is_empty() {
                 files_found = true;
                 if show_stderr {
-                    println!("==> {} <==", stdout_file);
+                    println!("==> {} <==", stdout_file.display());
                 }
                 print!("{}", content);
             }
         }
 
-        if show_stderr && Path::new(&stderr_file).exists() {
+        if show_stderr && stderr_file.exists() {
             let content = read_last_n_lines(&stderr_file, lines)?;
             if !content.is_empty() {
                 files_found = true;
                 if show_stdout {
-                    println!("==> {} <==", stderr_file);
+                    println!("==> {} <==", stderr_file.display());
                 }
                 print!("{}", content);
             }
@@ -520,15 +616,15 @@ fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines
     }
 
     // Follow mode: original real-time monitoring behavior
-    let mut file_positions: std::collections::HashMap<String, u64> =
+    let mut file_positions: std::collections::HashMap<PathBuf, u64> =
         std::collections::HashMap::new();
 
-    if show_stdout && Path::new(&stdout_file).exists() {
+    if show_stdout && stdout_file.exists() {
         let mut file = File::open(&stdout_file)?;
         let initial_content = read_file_content(&mut file)?;
         if !initial_content.is_empty() {
             if show_stderr {
-                println!("==> {} <==", stdout_file);
+                println!("==> {} <==", stdout_file.display());
             }
             print!("{}", initial_content);
         }
@@ -536,14 +632,14 @@ fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines
         file_positions.insert(stdout_file.clone(), position);
     }
 
-    if show_stderr && Path::new(&stderr_file).exists() {
+    if show_stderr && stderr_file.exists() {
         let mut file = File::open(&stderr_file)?;
         let initial_content = read_file_content(&mut file)?;
         if !initial_content.is_empty() {
             if show_stdout && file_positions.len() > 0 {
-                println!("\n==> {} <==", stderr_file);
+                println!("\n==> {} <==", stderr_file.display());
             } else if show_stdout {
-                println!("==> {} <==", stderr_file);
+                println!("==> {} <==", stderr_file.display());
             }
             print!("{}", initial_content);
         }
@@ -564,8 +660,8 @@ fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines
     let (tx, rx) = channel();
     let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
 
-    // Watch the current directory for new files and changes
-    watcher.watch(Path::new("."), RecursiveMode::NonRecursive)?;
+    // Watch the root directory for new files and changes
+    watcher.watch(root_dir, RecursiveMode::NonRecursive)?;
 
     // Handle Ctrl+C gracefully
     let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -585,13 +681,11 @@ fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines
                         ..
                     }) => {
                         for path in paths {
-                            let path_str = path.to_string_lossy().to_string();
-
-                            if (show_stdout && path_str == stdout_file)
-                                || (show_stderr && path_str == stderr_file)
+                            if (show_stdout && path == stdout_file)
+                                || (show_stderr && path == stderr_file)
                             {
                                 if let Err(e) = handle_file_change(
-                                    &path_str,
+                                    &path,
                                     &mut file_positions,
                                     show_stdout && show_stderr,
                                 ) {
@@ -607,16 +701,14 @@ fn tail_logs(id: &str, show_stdout: bool, show_stderr: bool, follow: bool, lines
                     }) => {
                         // Handle file creation
                         for path in paths {
-                            let path_str = path.to_string_lossy().to_string();
-
-                            if (show_stdout && path_str == stdout_file)
-                                || (show_stderr && path_str == stderr_file)
+                            if (show_stdout && path == stdout_file)
+                                || (show_stderr && path == stderr_file)
                             {
-                                tracing::info!("New file detected: {}", path_str);
-                                file_positions.insert(path_str.clone(), 0);
+                                tracing::info!("New file detected: {}", path.display());
+                                file_positions.insert(path.clone(), 0);
 
                                 if let Err(e) = handle_file_change(
-                                    &path_str,
+                                    &path,
                                     &mut file_positions,
                                     show_stdout && show_stderr,
                                 ) {
@@ -649,26 +741,22 @@ fn read_file_content(file: &mut File) -> Result<String> {
     Ok(content)
 }
 
-fn read_last_n_lines(file_path: &str, n: usize) -> Result<String> {
+fn read_last_n_lines<P: AsRef<Path>>(file_path: P, n: usize) -> Result<String> {
     let content = std::fs::read_to_string(file_path)?;
     if content.is_empty() {
         return Ok(String::new());
     }
-    
+
     let lines: Vec<&str> = content.lines().collect();
-    let start_index = if lines.len() > n {
-        lines.len() - n
-    } else {
-        0
-    };
-    
+    let start_index = if lines.len() > n { lines.len() - n } else { 0 };
+
     let last_lines: Vec<&str> = lines[start_index..].to_vec();
     Ok(last_lines.join("\n") + if content.ends_with('\n') { "\n" } else { "" })
 }
 
 fn handle_file_change(
-    file_path: &str,
-    positions: &mut std::collections::HashMap<String, u64>,
+    file_path: &Path,
+    positions: &mut std::collections::HashMap<PathBuf, u64>,
     show_headers: bool,
 ) -> Result<()> {
     let mut file = File::open(file_path)?;
@@ -683,20 +771,20 @@ fn handle_file_change(
 
     if !new_content.is_empty() {
         if show_headers {
-            println!("==> {} <==", file_path);
+            println!("==> {} <==", file_path.display());
         }
         print!("{}", new_content);
         std::io::Write::flush(&mut std::io::stdout())?;
 
         // Update position
         let new_pos = file.seek(SeekFrom::Current(0))?;
-        positions.insert(file_path.to_string(), new_pos);
+        positions.insert(file_path.to_path_buf(), new_pos);
     }
 
     Ok(())
 }
 
-fn list_daemons(quiet: bool) -> Result<()> {
+fn list_daemons(quiet: bool, root_dir: &Path) -> Result<()> {
     if !quiet {
         println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATUS", "COMMAND");
         println!("{}", "-".repeat(50));
@@ -704,14 +792,16 @@ fn list_daemons(quiet: bool) -> Result<()> {
 
     let mut found_any = false;
 
-    // Find all .pid files in current directory
-    for entry in find_pid_files()? {
+    // Find all .pid files in root directory
+    for entry in find_pid_files(root_dir)? {
         found_any = true;
         let path = entry.path();
-        let path_str = path.to_string_lossy();
+        let filename = path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
 
         // Extract ID from filename (remove .pid extension)
-        let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
+        let id = filename.strip_suffix(".pid").unwrap_or(filename);
 
         // Read PID data from file
         match PidFile::read_from_file(&path) {
@@ -770,13 +860,13 @@ fn list_daemons(quiet: bool) -> Result<()> {
     Ok(())
 }
 
-fn status_daemon(id: &str) -> Result<()> {
-    let pid_file = format!("{}.pid", id);
-    let stdout_file = format!("{}.stdout", id);
-    let stderr_file = format!("{}.stderr", id);
+fn status_daemon(id: &str, root_dir: &Path) -> Result<()> {
+    let pid_file = build_file_path(root_dir, id, "pid");
+    let stdout_file = build_file_path(root_dir, id, "stdout");
+    let stderr_file = build_file_path(root_dir, id, "stderr");
 
     println!("Daemon: {}", id);
-    println!("PID file: {}", pid_file);
+    println!("PID file: {}", pid_file.display());
 
     // Read PID data from file
     match PidFile::read_from_file(&pid_file) {
@@ -788,18 +878,18 @@ fn status_daemon(id: &str) -> Result<()> {
                 println!("Status: RUNNING");
 
                 // Show file information
-                if Path::new(&stdout_file).exists() {
+                if stdout_file.exists() {
                     let metadata = std::fs::metadata(&stdout_file)?;
-                    println!("Stdout file: {} ({} bytes)", stdout_file, metadata.len());
+                    println!("Stdout file: {} ({} bytes)", stdout_file.display(), metadata.len());
                 } else {
-                    println!("Stdout file: {} (not found)", stdout_file);
+                    println!("Stdout file: {} (not found)", stdout_file.display());
                 }
 
-                if Path::new(&stderr_file).exists() {
+                if stderr_file.exists() {
                     let metadata = std::fs::metadata(&stderr_file)?;
-                    println!("Stderr file: {} ({} bytes)", stderr_file, metadata.len());
+                    println!("Stderr file: {} ({} bytes)", stderr_file.display(), metadata.len());
                 } else {
-                    println!("Stderr file: {} (not found)", stderr_file);
+                    println!("Stderr file: {} (not found)", stderr_file.display());
                 }
             } else {
                 println!("Status: DEAD (process not running)");
@@ -820,16 +910,18 @@ fn status_daemon(id: &str) -> Result<()> {
     Ok(())
 }
 
-fn clean_orphaned_files() -> Result<()> {
+fn clean_orphaned_files(root_dir: &Path) -> Result<()> {
     tracing::info!("Scanning for orphaned daemon files...");
 
     let mut cleaned_count = 0;
 
-    // Find all .pid files in current directory
-    for entry in find_pid_files()? {
+    // Find all .pid files in root directory
+    for entry in find_pid_files(root_dir)? {
         let path = entry.path();
-        let path_str = path.to_string_lossy();
-        let id = path_str.strip_suffix(".pid").unwrap_or(&path_str);
+        let filename = path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let id = filename.strip_suffix(".pid").unwrap_or(filename);
 
         // Read PID data from file
         match PidFile::read_from_file(&path) {
@@ -843,28 +935,28 @@ fn clean_orphaned_files() -> Result<()> {
 
                     // Remove PID file
                     if let Err(e) = std::fs::remove_file(&path) {
-                        tracing::warn!("Failed to remove {}: {}", path_str, e);
+                        tracing::warn!("Failed to remove {}: {}", path.display(), e);
                     } else {
-                        tracing::info!("Removed {}", path_str);
+                        tracing::info!("Removed {}", path.display());
                     }
 
                     // Remove stdout file if it exists
-                    let stdout_file = format!("{}.stdout", id);
-                    if Path::new(&stdout_file).exists() {
+                    let stdout_file = build_file_path(root_dir, id, "stdout");
+                    if stdout_file.exists() {
                         if let Err(e) = std::fs::remove_file(&stdout_file) {
-                            tracing::warn!("Failed to remove {}: {}", stdout_file, e);
+                            tracing::warn!("Failed to remove {}: {}", stdout_file.display(), e);
                         } else {
-                            tracing::info!("Removed {}", stdout_file);
+                            tracing::info!("Removed {}", stdout_file.display());
                         }
                     }
 
                     // Remove stderr file if it exists
-                    let stderr_file = format!("{}.stderr", id);
-                    if Path::new(&stderr_file).exists() {
+                    let stderr_file = build_file_path(root_dir, id, "stderr");
+                    if stderr_file.exists() {
                         if let Err(e) = std::fs::remove_file(&stderr_file) {
-                            tracing::warn!("Failed to remove {}: {}", stderr_file, e);
+                            tracing::warn!("Failed to remove {}: {}", stderr_file.display(), e);
                         } else {
-                            tracing::info!("Removed {}", stderr_file);
+                            tracing::info!("Removed {}", stderr_file.display());
                         }
                     }
 
@@ -879,14 +971,14 @@ fn clean_orphaned_files() -> Result<()> {
             }
             Err(PidFileReadError::FileNotFound) => {
                 // This shouldn't happen since we found the file, but handle gracefully
-                tracing::warn!("PID file {} disappeared during processing", path_str);
+                tracing::warn!("PID file {} disappeared during processing", path.display());
             }
             Err(PidFileReadError::FileInvalid(_)) | Err(PidFileReadError::IoError(_)) => {
-                println!("Cleaning up invalid PID file: {}", path_str);
+                println!("Cleaning up invalid PID file: {}", path.display());
                 if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!("Failed to remove invalid PID file {}: {}", path_str, e);
+                    tracing::warn!("Failed to remove invalid PID file {}: {}", path.display(), e);
                 } else {
-                    tracing::info!("Removed invalid PID file {}", path_str);
+                    tracing::info!("Removed invalid PID file {}", path.display());
                     cleaned_count += 1;
                 }
             }
@@ -1164,8 +1256,8 @@ This tool is designed for Linux environments and provides a simple interface for
     );
 }
 
-fn wait_daemon(id: &str, timeout: u64, interval: u64) -> Result<()> {
-    let pid_file = format!("{}.pid", id);
+fn wait_daemon(id: &str, timeout: u64, interval: u64, root_dir: &Path) -> Result<()> {
+    let pid_file = build_file_path(root_dir, id, "pid");
 
     // Check if PID file exists and read PID data
     let pid_file_data = match PidFile::read_from_file(&pid_file) {
@@ -1174,10 +1266,18 @@ fn wait_daemon(id: &str, timeout: u64, interval: u64) -> Result<()> {
             return Err(anyhow::anyhow!("Process '{}' not found (no PID file)", id));
         }
         Err(PidFileReadError::FileInvalid(reason)) => {
-            return Err(anyhow::anyhow!("Process '{}' has invalid PID file: {}", id, reason));
+            return Err(anyhow::anyhow!(
+                "Process '{}' has invalid PID file: {}",
+                id,
+                reason
+            ));
         }
         Err(PidFileReadError::IoError(err)) => {
-            return Err(anyhow::anyhow!("Failed to read PID file for '{}': {}", id, err));
+            return Err(anyhow::anyhow!(
+                "Failed to read PID file for '{}': {}",
+                id,
+                err
+            ));
         }
     };
 
@@ -1208,17 +1308,20 @@ fn wait_daemon(id: &str, timeout: u64, interval: u64) -> Result<()> {
             tracing::info!("Process '{}' (PID: {}) has terminated", id, pid);
             return Ok(());
         }
-        
+
         thread::sleep(Duration::from_secs(interval));
         elapsed += interval;
     }
 
     // Timeout reached
-    Err(anyhow::anyhow!("Timeout reached waiting for process '{}' to terminate", id))
+    Err(anyhow::anyhow!(
+        "Timeout reached waiting for process '{}' to terminate",
+        id
+    ))
 }
 
-fn find_pid_files() -> Result<Vec<std::fs::DirEntry>> {
-    let entries = std::fs::read_dir(".")?
+fn find_pid_files(root_dir: &Path) -> Result<Vec<std::fs::DirEntry>> {
+    let entries = std::fs::read_dir(root_dir)?
         .filter_map(|entry| {
             entry.ok().and_then(|e| {
                 e.path()
