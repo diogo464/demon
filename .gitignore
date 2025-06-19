@@ -1,0 +1,6 @@
+/target
+
+# Demon process files (should not be committed)
+*.pid
+*.stdout
+*.stderr
