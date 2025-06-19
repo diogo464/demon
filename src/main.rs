@@ -80,12 +80,15 @@ impl PidFile {
         let lines: Vec<&str> = contents.lines().collect();
 
         if lines.is_empty() {
-            return Err(PidFileReadError::FileInvalid("PID file is empty".to_string()));
+            return Err(PidFileReadError::FileInvalid(
+                "PID file is empty".to_string(),
+            ));
         }
 
-        let pid = lines[0].trim().parse::<u32>().map_err(|_| {
-            PidFileReadError::FileInvalid("Invalid PID on first line".to_string())
-        })?;
+        let pid = lines[0]
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| PidFileReadError::FileInvalid("Invalid PID on first line".to_string()))?;
 
         let command: Vec<String> = lines[1..].iter().map(|line| line.to_string()).collect();
 
@@ -647,7 +650,10 @@ fn list_daemons(quiet: bool) -> Result<()> {
                     println!("{}:{}:{}", id, pid_file_data.pid, status);
                 } else {
                     let command = pid_file_data.command_string();
-                    println!("{:<20} {:<8} {:<10} {}", id, pid_file_data.pid, status, command);
+                    println!(
+                        "{:<20} {:<8} {:<10} {}",
+                        id, pid_file_data.pid, status, command
+                    );
                 }
             }
             Err(PidFileReadError::FileNotFound) => {
@@ -665,10 +671,7 @@ fn list_daemons(quiet: bool) -> Result<()> {
                 if quiet {
                     println!("{}:INVALID:ERROR", id);
                 } else {
-                    println!(
-                        "{:<20} {:<8} {:<10} {}",
-                        id, "INVALID", "ERROR", reason
-                    );
+                    println!("{:<20} {:<8} {:<10} {}", id, "INVALID", "ERROR", reason);
                 }
             }
             Err(PidFileReadError::IoError(_)) => {
