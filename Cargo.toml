@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.40", features = ["derive"] }
+clap = { version = "4.5.40", features = ["derive", "env"] }
 ctrlc = "3.4.7"
 notify = "8.0.0"
 tracing = "0.1.41"

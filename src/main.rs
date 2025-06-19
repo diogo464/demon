@@ -120,7 +120,7 @@ struct Cli {
 #[derive(Args)]
 struct Global {
     /// Root directory for daemon files (pid, logs). If not specified, searches for git root.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, env = "DEMON_ROOT_DIR")]
     root_dir: Option<PathBuf>,
 }
 
