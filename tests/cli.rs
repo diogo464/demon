@@ -267,15 +267,21 @@ fn test_clean_with_orphans() {
 
     // Create a dead process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
-        .args(&["run", "dead", "echo", "hello"])
+    cmd.args(&["run", "--root-dir", temp_dir.path().to_str().unwrap(), "dead", "echo", "hello"])
         .assert()
         .success();
 
+    // Wait for process to complete
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Verify files exist before clean
+    assert!(temp_dir.path().join("dead.pid").exists());
+    assert!(temp_dir.path().join("dead.stdout").exists());
+    assert!(temp_dir.path().join("dead.stderr").exists());
+
     // Clean up orphaned files
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
-        .args(&["clean"])
+    cmd.args(&["clean", "--root-dir", temp_dir.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("Cleaned up"))
@@ -285,6 +291,52 @@ fn test_clean_with_orphans() {
     assert!(!temp_dir.path().join("dead.pid").exists());
     assert!(!temp_dir.path().join("dead.stdout").exists());
     assert!(!temp_dir.path().join("dead.stderr").exists());
+}
+
+#[test]
+fn test_clean_removes_stdout_stderr_files() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a process that outputs to both stdout and stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&[
+        "run", 
+        "--root-dir", 
+        temp_dir.path().to_str().unwrap(), 
+        "test_output",
+        "--",
+        "sh",
+        "-c",
+        "echo 'stdout content'; echo 'stderr content' >&2"
+    ])
+    .assert()
+    .success();
+
+    // Wait for process to complete
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Verify all files exist and have content
+    assert!(temp_dir.path().join("test_output.pid").exists());
+    assert!(temp_dir.path().join("test_output.stdout").exists());
+    assert!(temp_dir.path().join("test_output.stderr").exists());
+    
+    let stdout_content = fs::read_to_string(temp_dir.path().join("test_output.stdout")).unwrap();
+    let stderr_content = fs::read_to_string(temp_dir.path().join("test_output.stderr")).unwrap();
+    assert!(stdout_content.contains("stdout content"));
+    assert!(stderr_content.contains("stderr content"));
+
+    // Clean up orphaned files
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&["clean", "--root-dir", temp_dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cleaned up"))
+        .stdout(predicate::str::contains("orphaned"));
+
+    // Verify ALL files are gone, not just the PID file
+    assert!(!temp_dir.path().join("test_output.pid").exists());
+    assert!(!temp_dir.path().join("test_output.stdout").exists());
+    assert!(!temp_dir.path().join("test_output.stderr").exists());
 }
 
 #[test]
