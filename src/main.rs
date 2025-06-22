@@ -327,10 +327,11 @@ fn run_command(command: Commands) -> Result<()> {
 fn find_git_root() -> Result<PathBuf> {
     let mut current = std::env::current_dir()?;
     
-    loop {
+    // Find the git root directory
+    let git_root = loop {
         let git_path = current.join(".git");
         if git_path.exists() {
-            return Ok(current);
+            break current;
         }
         
         match current.parent() {
@@ -339,7 +340,30 @@ fn find_git_root() -> Result<PathBuf> {
                 "No git repository found. Please specify --root-dir or run from within a git repository"
             )),
         }
+    };
+    
+    // Create .demon subdirectory within git root
+    let demon_dir = git_root.join(".demon");
+    
+    // Handle the case where .demon already exists
+    if demon_dir.exists() {
+        if !demon_dir.is_dir() {
+            return Err(anyhow::anyhow!(
+                "Path {} exists but is not a directory. Please remove it or specify --root-dir",
+                demon_dir.display()
+            ));
+        }
+        // .demon exists and is a directory, we can use it
+        return Ok(demon_dir);
     }
+    
+    // Create .demon directory
+    std::fs::create_dir(&demon_dir)
+        .with_context(|| format!("Failed to create daemon directory {}", demon_dir.display()))?;
+    
+    tracing::info!("Created daemon directory: {}", demon_dir.display());
+    
+    Ok(demon_dir)
 }
 
 fn resolve_root_dir(global: &Global) -> Result<PathBuf> {

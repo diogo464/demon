@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -95,8 +96,7 @@ fn test_list_empty() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
-        .args(&["list"])
+    cmd.args(&["list", "--root-dir", temp_dir.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("ID"))
@@ -337,6 +337,52 @@ fn test_clean_removes_stdout_stderr_files() {
     assert!(!temp_dir.path().join("test_output.pid").exists());
     assert!(!temp_dir.path().join("test_output.stdout").exists());
     assert!(!temp_dir.path().join("test_output.stderr").exists());
+}
+
+#[test]
+fn test_default_demon_directory_creation() {
+    // This test verifies that when no --root-dir is specified,
+    // the system creates and uses a .demon subdirectory in the git root
+    
+    // Create a temporary git repo
+    let temp_dir = TempDir::new().unwrap();
+    let git_dir = temp_dir.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+    
+    // Change to the temp directory
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(temp_dir.path()).unwrap();
+    
+    // Restore directory when done
+    struct DirGuard(PathBuf);
+    impl Drop for DirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+    let _guard = DirGuard(original_dir);
+    
+    // Run a command without --root-dir to test default behavior
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&["run", "default_test", "echo", "hello"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Started daemon 'default_test'"));
+    
+    // Wait for process to complete
+    std::thread::sleep(Duration::from_millis(100));
+    
+    // Verify that .demon directory was created and files are in it
+    let demon_dir = temp_dir.path().join(".demon");
+    assert!(demon_dir.exists());
+    assert!(demon_dir.is_dir());
+    assert!(demon_dir.join("default_test.pid").exists());
+    assert!(demon_dir.join("default_test.stdout").exists());
+    assert!(demon_dir.join("default_test.stderr").exists());
+    
+    // Verify the stdout content
+    let stdout_content = fs::read_to_string(demon_dir.join("default_test.stdout")).unwrap();
+    assert_eq!(stdout_content.trim(), "hello");
 }
 
 #[test]
