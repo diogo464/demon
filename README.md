@@ -2,7 +2,7 @@
 
 A lightweight, intuitive CLI tool for spawning, managing, and monitoring background processes on Linux systems. Perfect for development servers, long-running tasks, and automation workflows.
 
-## ✨ Features
+## Features
 
 - **Simple Process Management**: Start, stop, and monitor background processes with ease
 - **Persistent Logging**: Automatic stdout/stderr capture to files  
@@ -11,21 +11,13 @@ A lightweight, intuitive CLI tool for spawning, managing, and monitoring backgro
 - **Machine-readable Output**: Perfect for scripting and LLM agent integration
 - **Zero Configuration**: Works out of the box, no setup required
 
-## 🚀 Installation
+## Installation
 
-### From Source
 ```bash
-git clone https://github.com/yourusername/demon
-cd demon
-cargo install --path .
+cargo install --git https://github.com/diogo464/demon
 ```
 
-### From Crates.io (Coming Soon)
-```bash
-cargo install demon
-```
-
-## 🎯 Quick Start
+## Quick Start
 
 ```bash
 # Start a development server
@@ -44,7 +36,7 @@ demon stop web-server
 demon clean
 ```
 
-## 📋 Command Reference
+## Command Reference
 
 ### `demon run <id> [command...]`
 Spawn a background process with the given identifier.
@@ -145,7 +137,7 @@ Output comprehensive usage guide optimized for LLM consumption.
 demon llm
 ```
 
-## 🎮 Use Cases
+## Use Cases
 
 ### Development Workflows
 Perfect for managing development servers and build processes:
@@ -213,7 +205,7 @@ demon run health-check -- while true; do curl -f http://localhost:8080/health ||
 demon run resource-monitor -- top -b -n1 | head -20
 ```
 
-## 🏗️ How It Works
+## How It Works
 
 When you run `demon run web-server python -m http.server 8080`:
 
@@ -225,7 +217,7 @@ When you run `demon run web-server python -m http.server 8080`:
 3. **Process Monitoring**: Tracks process lifecycle independently
 4. **Log Management**: Files persist after process termination for inspection
 
-## 🤖 LLM Agent Integration
+## LLM Agent Integration
 
 Demon is specifically designed to work seamlessly with LLM agents and automation tools:
 
@@ -261,7 +253,7 @@ else
 fi
 ```
 
-## 📁 File Management
+## File Management
 
 ### File Locations
 All files are created in the current working directory:
@@ -279,7 +271,7 @@ All files are created in the current working directory:
 - For long-running processes, implement rotation in your application
 - Or use external tools like `logrotate`
 
-## 🔧 Advanced Usage
+## Advanced Usage
 
 ### Process Management
 ```bash
@@ -313,56 +305,3 @@ demon run container -- docker run -d --name myapp nginx
 # Use with tmux/screen for complex setups
 demon run dev-env -- tmux new-session -d 'npm run dev'
 ```
-
-## ⚠️ System Requirements
-
-- **Operating System**: Linux (uses `kill` command for process management)
-- **Rust**: 1.70+ (for building from source)
-- **Permissions**: Standard user permissions (no root required)
-
-## 🔒 Security Considerations
-
-- Demon runs processes with the same permissions as the calling user
-- PID files contain process information - protect accordingly
-- Log files may contain sensitive information from your applications
-- No network access or elevated privileges required
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how to get started:
-
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Make your changes**
-4. **Run tests**: `cargo test`
-5. **Format code**: `cargo fmt`
-6. **Submit a pull request**
-
-### Development Setup
-```bash
-git clone https://github.com/yourusername/demon
-cd demon
-cargo build
-cargo test
-```
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🐛 Bug Reports & Feature Requests
-
-Found a bug or have a feature idea? Please open an issue on [GitHub Issues](https://github.com/yourusername/demon/issues).
-
-## 📚 Similar Tools
-
-- **pm2** - Process manager for Node.js applications
-- **supervisor** - Process control system for Unix  
-- **systemd** - System and service manager for Linux
-- **screen/tmux** - Terminal multiplexers
-
-Demon focuses on simplicity, LLM integration, and developer experience over complex process management features.
-
----
-
-**Built with ❤️ in Rust**
