@@ -36,15 +36,11 @@ fn test_run_missing_command() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&[
-        "run",
-        "--root-dir",
-        temp_dir.path().to_str().unwrap(),
-        "test",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicate::str::contains("Command cannot be empty"));
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "test"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Command cannot be empty"));
 }
 
 #[test]
@@ -52,17 +48,11 @@ fn test_run_creates_files() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&[
-        "run",
-        "--root-dir",
-        temp_dir.path().to_str().unwrap(),
-        "test",
-        "echo",
-        "hello",
-    ])
-    .assert()
-    .success()
-    .stdout(predicate::str::contains("Started daemon 'test'"));
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "test", "echo", "hello"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Started daemon 'test'"));
 
     // Verify files were created
     assert!(temp_dir.path().join("test.pid").exists());
@@ -83,20 +73,14 @@ fn test_run_duplicate_process() {
 
     // Start a long-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&[
-        "run",
-        "--root-dir",
-        temp_dir.path().to_str().unwrap(),
-        "long",
-        "sleep",
-        "30",
-    ])
-    .assert()
-    .success();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "long", "sleep", "30"])
+        .assert()
+        .success();
 
     // Try to start another with the same ID
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "long", "sleep", "5"])
         .assert()
         .failure()
@@ -104,7 +88,7 @@ fn test_run_duplicate_process() {
 
     // Clean up the running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["stop", "long"])
         .assert()
         .success();
@@ -115,7 +99,8 @@ fn test_list_empty() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["list", "--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("ID"))
@@ -130,14 +115,14 @@ fn test_list_with_processes() {
 
     // Start a process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "test", "echo", "done"])
         .assert()
         .success();
 
     // List processes
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["list"])
         .assert()
         .success()
@@ -151,7 +136,7 @@ fn test_cat_output() {
 
     // Create a process with output
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&[
             "run",
             "test",
@@ -165,7 +150,7 @@ fn test_cat_output() {
 
     // Cat the output
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["cat", "test"])
         .assert()
         .success()
@@ -179,7 +164,7 @@ fn test_cat_stdout_only() {
 
     // Create a process with output
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&[
             "run",
             "test",
@@ -193,7 +178,7 @@ fn test_cat_stdout_only() {
 
     // Cat only stdout
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["cat", "test", "--stdout"])
         .assert()
         .success()
@@ -206,7 +191,7 @@ fn test_status_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["status", "nonexistent"])
         .assert()
         .success()
@@ -219,14 +204,14 @@ fn test_status_dead_process() {
 
     // Create a short-lived process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "dead", "echo", "hello"])
         .assert()
         .success();
 
     // Check its status (should be dead)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["status", "dead"])
         .assert()
         .success()
@@ -238,7 +223,7 @@ fn test_stop_nonexistent() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["stop", "nonexistent"])
         .assert()
         .success()
@@ -251,14 +236,14 @@ fn test_stop_process() {
 
     // Start a long-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "long", "sleep", "10"])
         .assert()
         .success();
 
     // Stop it
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["stop", "long"])
         .assert()
         .success()
@@ -273,7 +258,7 @@ fn test_clean_no_orphans() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["clean"])
         .assert()
         .success()
@@ -286,16 +271,10 @@ fn test_clean_with_orphans() {
 
     // Create a dead process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&[
-        "run",
-        "--root-dir",
-        temp_dir.path().to_str().unwrap(),
-        "dead",
-        "echo",
-        "hello",
-    ])
-    .assert()
-    .success();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "dead", "echo", "hello"])
+        .assert()
+        .success();
 
     // Wait for process to complete
     std::thread::sleep(Duration::from_millis(100));
@@ -307,7 +286,8 @@ fn test_clean_with_orphans() {
 
     // Clean up orphaned files
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["clean", "--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["clean"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Cleaned up"))
@@ -325,18 +305,17 @@ fn test_clean_removes_stdout_stderr_files() {
 
     // Create a process that outputs to both stdout and stderr
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&[
-        "run",
-        "--root-dir",
-        temp_dir.path().to_str().unwrap(),
-        "test_output",
-        "--",
-        "sh",
-        "-c",
-        "echo 'stdout content'; echo 'stderr content' >&2",
-    ])
-    .assert()
-    .success();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&[
+            "run",
+            "test_output",
+            "--",
+            "sh",
+            "-c",
+            "echo 'stdout content'; echo 'stderr content' >&2",
+        ])
+        .assert()
+        .success();
 
     // Wait for process to complete
     std::thread::sleep(Duration::from_millis(100));
@@ -353,7 +332,8 @@ fn test_clean_removes_stdout_stderr_files() {
 
     // Clean up orphaned files
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["clean", "--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["clean"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Cleaned up"))
@@ -416,7 +396,7 @@ fn test_run_with_complex_command() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&[
             "run",
             "complex",
@@ -444,14 +424,14 @@ fn test_timeout_configuration() {
 
     // Start a process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "timeout-test", "sleep", "5"])
         .assert()
         .success();
 
     // Stop with custom timeout (should work normally since sleep responds to SIGTERM)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["stop", "timeout-test", "--timeout", "2"])
         .assert()
         .success()
@@ -467,7 +447,7 @@ fn test_invalid_process_id() {
 
     // Status should handle it gracefully
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["status", "invalid"])
         .assert()
         .success()
@@ -475,7 +455,7 @@ fn test_invalid_process_id() {
 
     // Clean should remove it
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["clean"])
         .assert()
         .success()
@@ -488,7 +468,7 @@ fn test_list_quiet_mode() {
 
     // Test quiet mode with no processes
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["list", "--quiet"])
         .assert()
         .success()
@@ -496,14 +476,14 @@ fn test_list_quiet_mode() {
 
     // Create a process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "quiet-test", "echo", "done"])
         .assert()
         .success();
 
     // Test quiet mode with process - should output colon-separated format
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["list", "-q"])
         .assert()
         .success()
@@ -543,7 +523,7 @@ fn test_wait_nonexistent_process() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["wait", "nonexistent"])
         .assert()
         .failure()
@@ -556,7 +536,7 @@ fn test_wait_already_dead_process() {
 
     // Create a short-lived process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "dead", "echo", "hello"])
         .assert()
         .success();
@@ -566,7 +546,7 @@ fn test_wait_already_dead_process() {
 
     // Try to wait for it (should fail since it's already dead)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["wait", "dead"])
         .assert()
         .failure()
@@ -579,14 +559,14 @@ fn test_wait_process_terminates() {
 
     // Start a process that will run for 2 seconds
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "short", "sleep", "2"])
         .assert()
         .success();
 
     // Wait for it with a 5-second timeout (should succeed)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["wait", "short", "--timeout", "5"])
         .assert()
         .success();
@@ -598,14 +578,14 @@ fn test_wait_timeout() {
 
     // Start a long-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "long", "sleep", "10"])
         .assert()
         .success();
 
     // Wait with a very short timeout (should fail)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["wait", "long", "--timeout", "2"])
         .assert()
         .failure()
@@ -613,7 +593,7 @@ fn test_wait_timeout() {
 
     // Clean up the still-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["stop", "long"])
         .assert()
         .success();
@@ -625,14 +605,14 @@ fn test_wait_infinite_timeout() {
 
     // Start a short process that will finish quickly
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "quick", "sleep", "1"])
         .assert()
         .success();
 
     // Wait with infinite timeout (should succeed quickly)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["wait", "quick", "--timeout", "0"])
         .assert()
         .success();
@@ -644,14 +624,14 @@ fn test_wait_custom_interval() {
 
     // Start a short process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["run", "interval-test", "sleep", "2"])
         .assert()
         .success();
 
     // Wait with custom interval (should still succeed)
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(["--root-dir", temp_dir.path().to_str().unwrap()])
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
         .args(&["wait", "interval-test", "--timeout", "5", "--interval", "2"])
         .assert()
         .success();
