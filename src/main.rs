@@ -293,7 +293,14 @@ fn run_command(command: Commands) -> Result<()> {
             let show_stdout = !args.stderr || args.stdout;
             let show_stderr = !args.stdout || args.stderr;
             let root_dir = resolve_root_dir(&args.global)?;
-            tail_logs(&args.id, show_stdout, show_stderr, args.follow, args.lines, &root_dir)
+            tail_logs(
+                &args.id,
+                show_stdout,
+                show_stderr,
+                args.follow,
+                args.lines,
+                &root_dir,
+            )
         }
         Commands::Cat(args) => {
             let show_stdout = !args.stderr || args.stdout;
@@ -326,25 +333,27 @@ fn run_command(command: Commands) -> Result<()> {
 
 fn find_git_root() -> Result<PathBuf> {
     let mut current = std::env::current_dir()?;
-    
+
     // Find the git root directory
     let git_root = loop {
         let git_path = current.join(".git");
         if git_path.exists() {
             break current;
         }
-        
+
         match current.parent() {
             Some(parent) => current = parent.to_path_buf(),
-            None => return Err(anyhow::anyhow!(
-                "No git repository found. Please specify --root-dir or run from within a git repository"
-            )),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "No git repository found. Please specify --root-dir or run from within a git repository"
+                ));
+            }
         }
     };
-    
+
     // Create .demon subdirectory within git root
     let demon_dir = git_root.join(".demon");
-    
+
     // Handle the case where .demon already exists
     if demon_dir.exists() {
         if !demon_dir.is_dir() {
@@ -356,13 +365,13 @@ fn find_git_root() -> Result<PathBuf> {
         // .demon exists and is a directory, we can use it
         return Ok(demon_dir);
     }
-    
+
     // Create .demon directory
     std::fs::create_dir(&demon_dir)
         .with_context(|| format!("Failed to create daemon directory {}", demon_dir.display()))?;
-    
+
     tracing::info!("Created daemon directory: {}", demon_dir.display());
-    
+
     Ok(demon_dir)
 }
 
@@ -370,13 +379,19 @@ fn resolve_root_dir(global: &Global) -> Result<PathBuf> {
     match &global.root_dir {
         Some(dir) => {
             if !dir.exists() {
-                return Err(anyhow::anyhow!("Specified root directory does not exist: {}", dir.display()));
+                return Err(anyhow::anyhow!(
+                    "Specified root directory does not exist: {}",
+                    dir.display()
+                ));
             }
             if !dir.is_dir() {
-                return Err(anyhow::anyhow!("Specified root path is not a directory: {}", dir.display()));
+                return Err(anyhow::anyhow!(
+                    "Specified root path is not a directory: {}",
+                    dir.display()
+                ));
             }
             Ok(dir.clone())
-        },
+        }
         None => find_git_root(),
     }
 }
@@ -428,7 +443,11 @@ fn run_daemon(id: &str, command: &[String], root_dir: &Path) -> Result<()> {
     // Don't wait for the child - let it run detached
     std::mem::forget(child);
 
-    println!("Started daemon '{}' with PID written to {}", id, pid_file.display());
+    println!(
+        "Started daemon '{}' with PID written to {}",
+        id,
+        pid_file.display()
+    );
 
     Ok(())
 }
@@ -820,7 +839,8 @@ fn list_daemons(quiet: bool, root_dir: &Path) -> Result<()> {
     for entry in find_pid_files(root_dir)? {
         found_any = true;
         let path = entry.path();
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
 
@@ -904,14 +924,22 @@ fn status_daemon(id: &str, root_dir: &Path) -> Result<()> {
                 // Show file information
                 if stdout_file.exists() {
                     let metadata = std::fs::metadata(&stdout_file)?;
-                    println!("Stdout file: {} ({} bytes)", stdout_file.display(), metadata.len());
+                    println!(
+                        "Stdout file: {} ({} bytes)",
+                        stdout_file.display(),
+                        metadata.len()
+                    );
                 } else {
                     println!("Stdout file: {} (not found)", stdout_file.display());
                 }
 
                 if stderr_file.exists() {
                     let metadata = std::fs::metadata(&stderr_file)?;
-                    println!("Stderr file: {} ({} bytes)", stderr_file.display(), metadata.len());
+                    println!(
+                        "Stderr file: {} ({} bytes)",
+                        stderr_file.display(),
+                        metadata.len()
+                    );
                 } else {
                     println!("Stderr file: {} (not found)", stderr_file.display());
                 }
@@ -942,7 +970,8 @@ fn clean_orphaned_files(root_dir: &Path) -> Result<()> {
     // Find all .pid files in root directory
     for entry in find_pid_files(root_dir)? {
         let path = entry.path();
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
         let id = filename.strip_suffix(".pid").unwrap_or(filename);
@@ -1000,7 +1029,11 @@ fn clean_orphaned_files(root_dir: &Path) -> Result<()> {
             Err(PidFileReadError::FileInvalid(_)) | Err(PidFileReadError::IoError(_)) => {
                 println!("Cleaning up invalid PID file: {}", path.display());
                 if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::warn!("Failed to remove invalid PID file {}: {}", path.display(), e);
+                    tracing::warn!(
+                        "Failed to remove invalid PID file {}: {}",
+                        path.display(),
+                        e
+                    );
                 } else {
                     tracing::info!("Removed invalid PID file {}", path.display());
                     cleaned_count += 1;

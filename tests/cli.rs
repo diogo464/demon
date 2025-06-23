@@ -36,10 +36,15 @@ fn test_run_missing_command() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["run", "--root-dir", temp_dir.path().to_str().unwrap(), "test"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Command cannot be empty"));
+    cmd.args(&[
+        "run",
+        "--root-dir",
+        temp_dir.path().to_str().unwrap(),
+        "test",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Command cannot be empty"));
 }
 
 #[test]
@@ -47,10 +52,17 @@ fn test_run_creates_files() {
     let temp_dir = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["run", "--root-dir", temp_dir.path().to_str().unwrap(), "test", "echo", "hello"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Started daemon 'test'"));
+    cmd.args(&[
+        "run",
+        "--root-dir",
+        temp_dir.path().to_str().unwrap(),
+        "test",
+        "echo",
+        "hello",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("Started daemon 'test'"));
 
     // Verify files were created
     assert!(temp_dir.path().join("test.pid").exists());
@@ -71,9 +83,16 @@ fn test_run_duplicate_process() {
 
     // Start a long-running process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["run", "--root-dir", temp_dir.path().to_str().unwrap(), "long", "sleep", "30"])
-        .assert()
-        .success();
+    cmd.args(&[
+        "run",
+        "--root-dir",
+        temp_dir.path().to_str().unwrap(),
+        "long",
+        "sleep",
+        "30",
+    ])
+    .assert()
+    .success();
 
     // Try to start another with the same ID
     let mut cmd = Command::cargo_bin("demon").unwrap();
@@ -267,9 +286,16 @@ fn test_clean_with_orphans() {
 
     // Create a dead process
     let mut cmd = Command::cargo_bin("demon").unwrap();
-    cmd.args(&["run", "--root-dir", temp_dir.path().to_str().unwrap(), "dead", "echo", "hello"])
-        .assert()
-        .success();
+    cmd.args(&[
+        "run",
+        "--root-dir",
+        temp_dir.path().to_str().unwrap(),
+        "dead",
+        "echo",
+        "hello",
+    ])
+    .assert()
+    .success();
 
     // Wait for process to complete
     std::thread::sleep(Duration::from_millis(100));
@@ -300,14 +326,14 @@ fn test_clean_removes_stdout_stderr_files() {
     // Create a process that outputs to both stdout and stderr
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.args(&[
-        "run", 
-        "--root-dir", 
-        temp_dir.path().to_str().unwrap(), 
+        "run",
+        "--root-dir",
+        temp_dir.path().to_str().unwrap(),
         "test_output",
         "--",
         "sh",
         "-c",
-        "echo 'stdout content'; echo 'stderr content' >&2"
+        "echo 'stdout content'; echo 'stderr content' >&2",
     ])
     .assert()
     .success();
@@ -319,7 +345,7 @@ fn test_clean_removes_stdout_stderr_files() {
     assert!(temp_dir.path().join("test_output.pid").exists());
     assert!(temp_dir.path().join("test_output.stdout").exists());
     assert!(temp_dir.path().join("test_output.stderr").exists());
-    
+
     let stdout_content = fs::read_to_string(temp_dir.path().join("test_output.stdout")).unwrap();
     let stderr_content = fs::read_to_string(temp_dir.path().join("test_output.stderr")).unwrap();
     assert!(stdout_content.contains("stdout content"));
@@ -343,16 +369,16 @@ fn test_clean_removes_stdout_stderr_files() {
 fn test_default_demon_directory_creation() {
     // This test verifies that when no --root-dir is specified,
     // the system creates and uses a .demon subdirectory in the git root
-    
+
     // Create a temporary git repo
     let temp_dir = TempDir::new().unwrap();
     let git_dir = temp_dir.path().join(".git");
     std::fs::create_dir(&git_dir).unwrap();
-    
+
     // Change to the temp directory
     let original_dir = std::env::current_dir().unwrap();
     std::env::set_current_dir(temp_dir.path()).unwrap();
-    
+
     // Restore directory when done
     struct DirGuard(PathBuf);
     impl Drop for DirGuard {
@@ -361,17 +387,17 @@ fn test_default_demon_directory_creation() {
         }
     }
     let _guard = DirGuard(original_dir);
-    
+
     // Run a command without --root-dir to test default behavior
     let mut cmd = Command::cargo_bin("demon").unwrap();
     cmd.args(&["run", "default_test", "echo", "hello"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Started daemon 'default_test'"));
-    
+
     // Wait for process to complete
     std::thread::sleep(Duration::from_millis(100));
-    
+
     // Verify that .demon directory was created and files are in it
     let demon_dir = temp_dir.path().join(".demon");
     assert!(demon_dir.exists());
@@ -379,7 +405,7 @@ fn test_default_demon_directory_creation() {
     assert!(demon_dir.join("default_test.pid").exists());
     assert!(demon_dir.join("default_test.stdout").exists());
     assert!(demon_dir.join("default_test.stderr").exists());
-    
+
     // Verify the stdout content
     let stdout_content = fs::read_to_string(demon_dir.join("default_test.stdout")).unwrap();
     assert_eq!(stdout_content.trim(), "hello");
