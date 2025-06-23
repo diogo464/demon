@@ -24,8 +24,8 @@ impl std::fmt::Display for PidFileReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PidFileReadError::FileNotFound => write!(f, "PID file not found"),
-            PidFileReadError::FileInvalid(reason) => write!(f, "PID file invalid: {}", reason),
-            PidFileReadError::IoError(err) => write!(f, "IO error reading PID file: {}", err),
+            PidFileReadError::FileInvalid(reason) => write!(f, "PID file invalid: {reason}"),
+            PidFileReadError::IoError(err) => write!(f, "IO error reading PID file: {err}"),
         }
     }
 }
@@ -59,7 +59,7 @@ impl PidFile {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self.pid)?;
         for arg in &self.command {
-            writeln!(file, "{}", arg)?;
+            writeln!(file, "{arg}")?;
         }
         Ok(())
     }
@@ -397,7 +397,7 @@ fn resolve_root_dir(global: &Global) -> Result<PathBuf> {
 }
 
 fn build_file_path(root_dir: &Path, id: &str, extension: &str) -> PathBuf {
-    root_dir.join(format!("{}.{}", id, extension))
+    root_dir.join(format!("{id}.{extension}"))
 }
 
 fn run_daemon(id: &str, command: &[String], root_dir: &Path) -> Result<()> {
@@ -434,7 +434,7 @@ fn run_daemon(id: &str, command: &[String], root_dir: &Path) -> Result<()> {
         .stderr(Stdio::from(stderr_redirect))
         .stdin(Stdio::null())
         .spawn()
-        .with_context(|| format!("Failed to start process '{}' with args {:?}", program, args))?;
+        .with_context(|| format!("Failed to start process '{program}' with args {args:?}"))?;
 
     // Write PID and command to file
     let pid_file_data = PidFile::new(child.id(), command.to_vec());
@@ -462,7 +462,7 @@ fn is_process_running<P: AsRef<Path>>(pid_file: P) -> Result<bool> {
 
     // Check if process is still running using kill -0
     let output = Command::new("kill")
-        .args(&["-0", &pid_file_data.pid.to_string()])
+        .args(["-0", &pid_file_data.pid.to_string()])
         .output()?;
 
     Ok(output.status.success())
@@ -475,11 +475,11 @@ fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
     let pid_file_data = match PidFile::read_from_file(&pid_file) {
         Ok(data) => data,
         Err(PidFileReadError::FileNotFound) => {
-            println!("Process '{}' is not running (no PID file found)", id);
+            println!("Process '{id}' is not running (no PID file found)");
             return Ok(());
         }
         Err(PidFileReadError::FileInvalid(_)) => {
-            println!("Process '{}': invalid PID file, removing it", id);
+            println!("Process '{id}': invalid PID file, removing it");
             std::fs::remove_file(&pid_file)?;
             return Ok(());
         }
@@ -499,10 +499,7 @@ fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
 
     // Check if process is running
     if !is_process_running_by_pid(pid) {
-        println!(
-            "Process '{}' (PID: {}) is not running, cleaning up PID file",
-            id, pid
-        );
+        println!("Process '{id}' (PID: {pid}) is not running, cleaning up PID file");
         std::fs::remove_file(&pid_file)?;
         return Ok(());
     }
@@ -510,7 +507,7 @@ fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
     // Send SIGTERM
     tracing::info!("Sending SIGTERM to PID {}", pid);
     let output = Command::new("kill")
-        .args(&["-TERM", &pid.to_string()])
+        .args(["-TERM", &pid.to_string()])
         .output()?;
 
     if !output.status.success() {
@@ -520,7 +517,7 @@ fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
     // Wait for the process to terminate
     for i in 0..timeout {
         if !is_process_running_by_pid(pid) {
-            println!("Process '{}' (PID: {}) terminated gracefully", id, pid);
+            println!("Process '{id}' (PID: {pid}) terminated gracefully");
             std::fs::remove_file(&pid_file)?;
             return Ok(());
         }
@@ -539,7 +536,7 @@ fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
         timeout
     );
     let output = Command::new("kill")
-        .args(&["-KILL", &pid.to_string()])
+        .args(["-KILL", &pid.to_string()])
         .output()?;
 
     if !output.status.success() {
@@ -556,16 +553,14 @@ fn stop_daemon(id: &str, timeout: u64, root_dir: &Path) -> Result<()> {
         ));
     }
 
-    println!("Process '{}' (PID: {}) terminated forcefully", id, pid);
+    println!("Process '{id}' (PID: {pid}) terminated forcefully");
     std::fs::remove_file(&pid_file)?;
 
     Ok(())
 }
 
 fn is_process_running_by_pid(pid: u32) -> bool {
-    let output = Command::new("kill")
-        .args(&["-0", &pid.to_string()])
-        .output();
+    let output = Command::new("kill").args(["-0", &pid.to_string()]).output();
 
     match output {
         Ok(output) => output.status.success(),
@@ -586,7 +581,7 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool, root_dir: &Path) -> 
                 if show_stderr {
                     println!("==> {} <==", stdout_file.display());
                 }
-                print!("{}", contents);
+                print!("{contents}");
             }
         } else {
             tracing::warn!("Could not read {}", stdout_file.display());
@@ -600,7 +595,7 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool, root_dir: &Path) -> 
                 if show_stdout {
                     println!("==> {} <==", stderr_file.display());
                 }
-                print!("{}", contents);
+                print!("{contents}");
             }
         } else {
             tracing::warn!("Could not read {}", stderr_file.display());
@@ -608,7 +603,7 @@ fn cat_logs(id: &str, show_stdout: bool, show_stderr: bool, root_dir: &Path) -> 
     }
 
     if !files_found {
-        println!("No log files found for daemon '{}'", id);
+        println!("No log files found for daemon '{id}'");
     }
 
     Ok(())
@@ -636,7 +631,7 @@ fn tail_logs(
                 if show_stderr {
                     println!("==> {} <==", stdout_file.display());
                 }
-                print!("{}", content);
+                print!("{content}");
             }
         }
 
@@ -647,12 +642,12 @@ fn tail_logs(
                 if show_stdout {
                     println!("==> {} <==", stderr_file.display());
                 }
-                print!("{}", content);
+                print!("{content}");
             }
         }
 
         if !files_found {
-            println!("No log files found for daemon '{}'", id);
+            println!("No log files found for daemon '{id}'");
         }
 
         return Ok(());
@@ -669,9 +664,9 @@ fn tail_logs(
             if show_stderr {
                 println!("==> {} <==", stdout_file.display());
             }
-            print!("{}", initial_content);
+            print!("{initial_content}");
         }
-        let position = file.seek(SeekFrom::Current(0))?;
+        let position = file.stream_position()?;
         file_positions.insert(stdout_file.clone(), position);
     }
 
@@ -679,22 +674,19 @@ fn tail_logs(
         let mut file = File::open(&stderr_file)?;
         let initial_content = read_file_content(&mut file)?;
         if !initial_content.is_empty() {
-            if show_stdout && file_positions.len() > 0 {
+            if show_stdout && !file_positions.is_empty() {
                 println!("\n==> {} <==", stderr_file.display());
             } else if show_stdout {
                 println!("==> {} <==", stderr_file.display());
             }
-            print!("{}", initial_content);
+            print!("{initial_content}");
         }
-        let position = file.seek(SeekFrom::Current(0))?;
+        let position = file.stream_position()?;
         file_positions.insert(stderr_file.clone(), position);
     }
 
     if file_positions.is_empty() {
-        println!(
-            "No log files found for daemon '{}'. Watching for new files...",
-            id
-        );
+        println!("No log files found for daemon '{id}'. Watching for new files...");
     }
 
     tracing::info!("Watching for changes to log files... Press Ctrl+C to stop.");
@@ -816,11 +808,11 @@ fn handle_file_change(
         if show_headers {
             println!("==> {} <==", file_path.display());
         }
-        print!("{}", new_content);
+        print!("{new_content}");
         std::io::Write::flush(&mut std::io::stdout())?;
 
         // Update position
-        let new_pos = file.seek(SeekFrom::Current(0))?;
+        let new_pos = file.stream_position()?;
         positions.insert(file_path.to_path_buf(), new_pos);
     }
 
@@ -829,7 +821,7 @@ fn handle_file_change(
 
 fn list_daemons(quiet: bool, root_dir: &Path) -> Result<()> {
     if !quiet {
-        println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATUS", "COMMAND");
+        println!("{:<20} {:<8} {:<10} COMMAND", "ID", "PID", "STATUS");
         println!("{}", "-".repeat(50));
     }
 
@@ -869,28 +861,28 @@ fn list_daemons(quiet: bool, root_dir: &Path) -> Result<()> {
             Err(PidFileReadError::FileNotFound) => {
                 // This shouldn't happen since we found the file, but handle gracefully
                 if quiet {
-                    println!("{}:NOTFOUND:ERROR", id);
+                    println!("{id}:NOTFOUND:ERROR");
                 } else {
                     println!(
-                        "{:<20} {:<8} {:<10} {}",
-                        id, "NOTFOUND", "ERROR", "PID file disappeared"
+                        "{:<20} {:<8} {:<10} PID file disappeared",
+                        id, "NOTFOUND", "ERROR"
                     );
                 }
             }
             Err(PidFileReadError::FileInvalid(reason)) => {
                 if quiet {
-                    println!("{}:INVALID:ERROR", id);
+                    println!("{id}:INVALID:ERROR");
                 } else {
                     println!("{:<20} {:<8} {:<10} {}", id, "INVALID", "ERROR", reason);
                 }
             }
             Err(PidFileReadError::IoError(_)) => {
                 if quiet {
-                    println!("{}:ERROR:ERROR", id);
+                    println!("{id}:ERROR:ERROR");
                 } else {
                     println!(
-                        "{:<20} {:<8} {:<10} {}",
-                        id, "ERROR", "ERROR", "Cannot read PID file"
+                        "{:<20} {:<8} {:<10} Cannot read PID file",
+                        id, "ERROR", "ERROR"
                     );
                 }
             }
@@ -909,7 +901,7 @@ fn status_daemon(id: &str, root_dir: &Path) -> Result<()> {
     let stdout_file = build_file_path(root_dir, id, "stdout");
     let stderr_file = build_file_path(root_dir, id, "stderr");
 
-    println!("Daemon: {}", id);
+    println!("Daemon: {id}");
     println!("PID file: {}", pid_file.display());
 
     // Read PID data from file
@@ -952,10 +944,10 @@ fn status_daemon(id: &str, root_dir: &Path) -> Result<()> {
             println!("Status: NOT FOUND (no PID file)");
         }
         Err(PidFileReadError::FileInvalid(reason)) => {
-            println!("Status: ERROR (invalid PID file: {})", reason);
+            println!("Status: ERROR (invalid PID file: {reason})");
         }
         Err(PidFileReadError::IoError(err)) => {
-            println!("Status: ERROR (cannot read PID file: {})", err);
+            println!("Status: ERROR (cannot read PID file: {err})");
         }
     }
 
@@ -1045,7 +1037,7 @@ fn clean_orphaned_files(root_dir: &Path) -> Result<()> {
     if cleaned_count == 0 {
         println!("No orphaned files found.");
     } else {
-        println!("Cleaned up {} orphaned daemon(s).", cleaned_count);
+        println!("Cleaned up {cleaned_count} orphaned daemon(s).");
     }
 
     Ok(())
