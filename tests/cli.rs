@@ -662,13 +662,19 @@ fn test_proper_child_process_management() {
     // Test that the process was properly managed
     // With the fixed implementation, the Child destructor runs properly
     // ensuring resource cleanup while still detaching the process
-    
+
     // The process should complete normally and be properly reaped
     // No zombie processes should remain
-    println!("✓ Process {} managed properly with background thread approach", pid);
+    println!(
+        "✓ Process {} managed properly with background thread approach",
+        pid
+    );
     println!("✓ Child destructor runs ensuring proper resource cleanup");
     println!("✓ Process detachment achieved without std::mem::forget");
-    
+
     // Test passes - proper process management achieved
-    assert!(true, "Process daemonization now uses proper resource management");
+    assert!(
+        true,
+        "Process daemonization now uses proper resource management"
+    );
 }
