@@ -290,8 +290,19 @@ fn run_command(command: Commands) -> Result<()> {
             stop_daemon(&args.id, args.timeout, &root_dir)
         }
         Commands::Tail(args) => {
-            let show_stdout = !args.stderr || args.stdout;
-            let show_stderr = !args.stdout || args.stderr;
+            // Clearer logic for determining which streams to show:
+            // - If no flags are specified, show both streams
+            // - If one or both flags are specified, show only the requested streams
+            let show_stdout = if args.stdout || args.stderr {
+                args.stdout
+            } else {
+                true // Show both when no flags are specified
+            };
+            let show_stderr = if args.stdout || args.stderr {
+                args.stderr
+            } else {
+                true // Show both when no flags are specified
+            };
             let root_dir = resolve_root_dir(&args.global)?;
             tail_logs(
                 &args.id,
@@ -303,8 +314,19 @@ fn run_command(command: Commands) -> Result<()> {
             )
         }
         Commands::Cat(args) => {
-            let show_stdout = !args.stderr || args.stdout;
-            let show_stderr = !args.stdout || args.stderr;
+            // Clearer logic for determining which streams to show:
+            // - If no flags are specified, show both streams
+            // - If one or both flags are specified, show only the requested streams
+            let show_stdout = if args.stdout || args.stderr {
+                args.stdout
+            } else {
+                true // Show both when no flags are specified
+            };
+            let show_stderr = if args.stdout || args.stderr {
+                args.stderr
+            } else {
+                true // Show both when no flags are specified
+            };
             let root_dir = resolve_root_dir(&args.global)?;
             cat_logs(&args.id, show_stdout, show_stderr, &root_dir)
         }
