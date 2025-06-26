@@ -440,8 +440,19 @@ fn run_daemon(id: &str, command: &[String], root_dir: &Path) -> Result<()> {
     let pid_file_data = PidFile::new(child.id(), command.to_vec());
     pid_file_data.write_to_file(&pid_file)?;
 
-    // Don't wait for the child - let it run detached
-    std::mem::forget(child);
+    // Properly detach the child process
+    // Instead of using std::mem::forget which prevents proper cleanup,
+    // we spawn a background thread to handle the child process lifecycle
+    std::thread::spawn(move || {
+        // The child process is moved into this thread
+        // When this thread ends, the Child's Drop implementation will run
+        // This ensures proper resource cleanup while still detaching the process
+
+        // We don't need to wait for the child since we want it to run independently
+        // But by letting the Child's Drop trait run, we ensure proper cleanup
+        // The process will become the child of init (PID 1) which will reap it
+        drop(child);
+    });
 
     println!(
         "Started daemon '{}' with PID written to {}",
