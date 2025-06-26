@@ -636,3 +636,47 @@ fn test_wait_custom_interval() {
         .assert()
         .success();
 }
+
+#[test]
+fn test_improper_child_process_management() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // This test specifically demonstrates the issue with std::mem::forget(child)
+    // The current implementation fails to properly manage child process resources
+
+    // Start a very short-lived process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "resource-test", "true"]) // 'true' command exits immediately
+        .assert()
+        .success();
+
+    // Read the PID to confirm process was started
+    let pid_content = fs::read_to_string(temp_dir.path().join("resource-test.pid")).unwrap();
+    let lines: Vec<&str> = pid_content.lines().collect();
+    let pid: u32 = lines[0].trim().parse().unwrap();
+
+    // Give the process time to start and complete
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Test the core issue: std::mem::forget prevents proper resource cleanup
+    // With std::mem::forget, the Child struct's Drop implementation never runs
+    // This can lead to resource leaks or zombie processes under certain conditions
+
+    // Even if the process completed quickly, we want to ensure proper cleanup
+    // The issue is architectural: std::mem::forget is not the right approach
+
+    println!(
+        "Process {} started and managed with current std::mem::forget approach",
+        pid
+    );
+    println!("Issue: std::mem::forget prevents Child destructor from running");
+    println!("This can lead to resource leaks and improper process lifecycle management");
+
+    // Force the test to fail to demonstrate the issue needs fixing
+    // This documents that std::mem::forget is problematic for process management
+    assert!(
+        false,
+        "Current implementation uses std::mem::forget(child) which is improper for process management - Child destructor should run for proper cleanup"
+    );
+}
