@@ -1,3 +1,7 @@
+# archive
+
+this tool is not really needed anymore, most agentic harnesses can already spawn and control background processes natively.
+
 # demon
 
 This tool helps AI agents control long-running processes and view their logs easily. For example, when running `npm run dev`, Claude often runs problematic commands like `npm run dev &` which makes it unable to see the logs or properly kill the process afterward. When it tries to run `npm run dev` again, the new instance binds to a different port and it ends up getting kind of lost.
