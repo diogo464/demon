@@ -332,7 +332,9 @@ fn run_command(command: Commands) -> Result<()> {
 }
 
 fn find_git_root() -> Result<PathBuf> {
-    let mut current = std::env::current_dir()?;
+    let mut current = std::env::current_dir().with_context(
+        || "Failed to get current working directory. Please check your file system permissions",
+    )?;
 
     // Find the git root directory
     let git_root = loop {
@@ -345,7 +347,10 @@ fn find_git_root() -> Result<PathBuf> {
             Some(parent) => current = parent.to_path_buf(),
             None => {
                 return Err(anyhow::anyhow!(
-                    "No git repository found. Please specify --root-dir or run from within a git repository"
+                    "No git repository found in current directory or any parent directories.\n\
+                     Please either:\n\
+                     1. Run demon from within a git repository, or\n\
+                     2. Specify a root directory with --root-dir <path>"
                 ));
             }
         }
@@ -358,17 +363,30 @@ fn find_git_root() -> Result<PathBuf> {
     if demon_dir.exists() {
         if !demon_dir.is_dir() {
             return Err(anyhow::anyhow!(
-                "Path {} exists but is not a directory. Please remove it or specify --root-dir",
+                "Path {} exists but is not a directory.\n\
+                 Please either:\n\
+                 1. Remove the existing file: rm {}\n\
+                 2. Specify a different root directory with --root-dir <path>",
+                demon_dir.display(),
                 demon_dir.display()
             ));
         }
         // .demon exists and is a directory, we can use it
+        tracing::debug!("Using existing daemon directory: {}", demon_dir.display());
         return Ok(demon_dir);
     }
 
     // Create .demon directory
-    std::fs::create_dir(&demon_dir)
-        .with_context(|| format!("Failed to create daemon directory {}", demon_dir.display()))?;
+    std::fs::create_dir(&demon_dir).with_context(|| {
+        format!(
+            "Failed to create daemon directory {}.\n\
+             This may be due to:\n\
+             1. Insufficient permissions in the git root directory\n\
+             2. File system errors\n\
+             Please check permissions or specify --root-dir with a writable directory",
+            demon_dir.display()
+        )
+    })?;
 
     tracing::info!("Created daemon directory: {}", demon_dir.display());
 
@@ -378,22 +396,53 @@ fn find_git_root() -> Result<PathBuf> {
 fn resolve_root_dir(global: &Global) -> Result<PathBuf> {
     match &global.root_dir {
         Some(dir) => {
-            if !dir.exists() {
-                return Err(anyhow::anyhow!(
-                    "Specified root directory does not exist: {}",
-                    dir.display()
-                ));
-            }
-            if !dir.is_dir() {
-                return Err(anyhow::anyhow!(
-                    "Specified root path is not a directory: {}",
-                    dir.display()
-                ));
-            }
-            Ok(dir.clone())
+            // Validate the specified root directory
+            validate_root_directory(dir)
         }
         None => find_git_root(),
     }
+}
+
+/// Validates that a directory path is suitable for use as a root directory
+fn validate_root_directory(dir: &Path) -> Result<PathBuf> {
+    // First check if the path exists
+    if !dir.exists() {
+        return Err(anyhow::anyhow!(
+            "Specified root directory does not exist: {}\nPlease create the directory first or specify a different path",
+            dir.display()
+        ));
+    }
+
+    // Check if it's actually a directory
+    if !dir.is_dir() {
+        return Err(anyhow::anyhow!(
+            "Specified root path is not a directory: {}\nPlease specify a directory path, not a file",
+            dir.display()
+        ));
+    }
+
+    // Try to canonicalize the path to resolve symlinks and make it absolute
+    let canonical_dir = dir.canonicalize().with_context(|| {
+        format!(
+            "Failed to resolve path {}: path may contain invalid components or broken symlinks",
+            dir.display()
+        )
+    })?;
+
+    // Check if we can write to the directory by attempting to create a temporary file
+    let temp_file_path = canonical_dir.join(".demon_write_test");
+    if let Err(e) = std::fs::write(&temp_file_path, "test") {
+        return Err(anyhow::anyhow!(
+            "Cannot write to specified root directory {}: {}\nPlease check directory permissions",
+            canonical_dir.display(),
+            e
+        ));
+    }
+    // Clean up the test file
+    let _ = std::fs::remove_file(&temp_file_path);
+
+    tracing::debug!("Validated root directory: {}", canonical_dir.display());
+    Ok(canonical_dir)
 }
 
 fn build_file_path(root_dir: &Path, id: &str, extension: &str) -> PathBuf {

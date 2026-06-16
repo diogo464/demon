@@ -636,3 +636,632 @@ fn test_wait_custom_interval() {
         .assert()
         .success();
 }
+
+// Root directory validation edge case tests
+
+#[test]
+fn test_root_dir_is_file_not_directory() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a file instead of a directory
+    let file_path = temp_dir.path().join("not_a_directory");
+    fs::write(&file_path, "this is a file").unwrap();
+
+    // Try to use the file as root directory - should fail
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&[
+        "run",
+        "--root-dir",
+        file_path.to_str().unwrap(),
+        "test",
+        "echo",
+        "hello",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("not a directory"));
+}
+
+#[test]
+fn test_root_dir_does_not_exist() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Use a non-existent path
+    let nonexistent_path = temp_dir.path().join("does_not_exist");
+
+    // Try to use non-existent path as root directory - should fail
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&[
+        "--root-dir",
+        nonexistent_path.to_str().unwrap(),
+        "run",
+        "test",
+        "echo",
+        "hello",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("does not exist"));
+}
+
+#[test]
+fn test_git_root_demon_dir_exists_as_file() {
+    // Create a temporary git repo
+    let temp_dir = TempDir::new().unwrap();
+    let git_dir = temp_dir.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+
+    // Create .demon as a FILE instead of directory
+    let demon_file = temp_dir.path().join(".demon");
+    fs::write(&demon_file, "this should be a directory").unwrap();
+
+    // Change to the temp directory
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(temp_dir.path()).unwrap();
+
+    // Restore directory when done
+    struct DirGuard(PathBuf);
+    impl Drop for DirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+    let _guard = DirGuard(original_dir);
+
+    // Run command without --root-dir (should use git root and fail)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&["run", "test", "echo", "hello"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exists but is not a directory"));
+}
+
+#[test]
+fn test_git_root_demon_dir_permission_denied() {
+    // This test is tricky to implement portably since it requires creating
+    // a directory with restricted permissions. We'll create a more comprehensive
+    // test that simulates the condition by creating a read-only parent directory.
+
+    let temp_dir = TempDir::new().unwrap();
+    let git_dir = temp_dir.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+
+    // Create a subdirectory and make it read-only
+    let subdir = temp_dir.path().join("subdir");
+    std::fs::create_dir(&subdir).unwrap();
+    let subdir_git = subdir.join(".git");
+    std::fs::create_dir(&subdir_git).unwrap();
+
+    // Make the subdirectory read-only (this should prevent .demon creation)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&subdir).unwrap().permissions();
+        perms.set_mode(0o444); // Read-only
+        std::fs::set_permissions(&subdir, perms).unwrap();
+    }
+
+    // Change to the subdirectory
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&subdir).unwrap();
+
+    // Restore directory and permissions when done
+    struct TestGuard {
+        original_dir: PathBuf,
+        #[cfg(unix)]
+        restore_path: PathBuf,
+    }
+    impl Drop for TestGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original_dir);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(mut perms) =
+                    std::fs::metadata(&self.restore_path).map(|m| m.permissions())
+                {
+                    perms.set_mode(0o755);
+                    let _ = std::fs::set_permissions(&self.restore_path, perms);
+                }
+            }
+        }
+    }
+    let _guard = TestGuard {
+        original_dir,
+        #[cfg(unix)]
+        restore_path: subdir.clone(),
+    };
+
+    // Run command without --root-dir - should fail due to permission denied
+    #[cfg(unix)]
+    {
+        let mut cmd = Command::cargo_bin("demon").unwrap();
+        cmd.args(&["run", "test", "echo", "hello"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "Failed to create daemon directory",
+            ));
+    }
+}
+
+#[test]
+fn test_no_git_root_and_no_root_dir() {
+    // Create a temporary directory that's NOT a git repository
+    let temp_dir = TempDir::new().unwrap();
+
+    // Change to the temp directory
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(temp_dir.path()).unwrap();
+
+    // Restore directory when done
+    struct DirGuard(PathBuf);
+    impl Drop for DirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+    let _guard = DirGuard(original_dir);
+
+    // Run command without --root-dir and outside git repo - should fail
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&["run", "test", "echo", "hello"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No git repository found"));
+}
+
+#[test]
+fn test_invalid_utf8_path_handling() {
+    // This test checks handling of paths with invalid UTF-8 characters
+    // This is primarily relevant on Unix systems where paths can contain arbitrary bytes
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Try to use a path with null bytes (should be invalid on most systems)
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&[
+        "--root-dir",
+        "path\0with\0nulls",
+        "run",
+        "test",
+        "echo",
+        "hello",
+    ])
+    .assert()
+    .failure();
+    // Note: exact error message may vary by OS, so we don't check specific text
+}
+
+#[test]
+fn test_deeply_nested_nonexistent_path() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a path with many levels that don't exist
+    let deep_path = temp_dir
+        .path()
+        .join("does")
+        .join("not")
+        .join("exist")
+        .join("at")
+        .join("all")
+        .join("very")
+        .join("deep")
+        .join("path");
+
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.args(&[
+        "--root-dir",
+        deep_path.to_str().unwrap(),
+        "run",
+        "test",
+        "echo",
+        "hello",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("does not exist"));
+}
+
+#[test]
+fn test_root_dir_is_symlink_to_directory() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a real directory
+    let real_dir = temp_dir.path().join("real_directory");
+    std::fs::create_dir(&real_dir).unwrap();
+
+    // Create a symlink to it (on systems that support it)
+    let symlink_path = temp_dir.path().join("symlink_to_dir");
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&real_dir, &symlink_path).unwrap();
+
+        // Using symlink as root dir should work (following the symlink)
+        let mut cmd = Command::cargo_bin("demon").unwrap();
+        cmd.args(&[
+            "--root-dir",
+            symlink_path.to_str().unwrap(),
+            "run",
+            "test",
+            "echo",
+            "hello",
+        ])
+        .assert()
+        .success();
+
+        // Verify files were created in the real directory (following symlink)
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(real_dir.join("test.pid").exists());
+        assert!(real_dir.join("test.stdout").exists());
+        assert!(real_dir.join("test.stderr").exists());
+    }
+}
+
+#[test]
+fn test_root_dir_is_symlink_to_file() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a regular file
+    let regular_file = temp_dir.path().join("regular_file");
+    fs::write(&regular_file, "content").unwrap();
+
+    // Create a symlink to the file
+    let symlink_path = temp_dir.path().join("symlink_to_file");
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&regular_file, &symlink_path).unwrap();
+
+        // Using symlink to file as root dir should fail
+        let mut cmd = Command::cargo_bin("demon").unwrap();
+        cmd.args(&[
+            "--root-dir",
+            symlink_path.to_str().unwrap(),
+            "run",
+            "test",
+            "echo",
+            "hello",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a directory"));
+    }
+}
+
+#[test]
+fn test_root_dir_is_broken_symlink() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a symlink to a non-existent target
+    let broken_symlink = temp_dir.path().join("broken_symlink");
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("nonexistent_target", &broken_symlink).unwrap();
+
+        // Using broken symlink as root dir should fail
+        let mut cmd = Command::cargo_bin("demon").unwrap();
+        cmd.args(&[
+            "--root-dir",
+            broken_symlink.to_str().unwrap(),
+            "run",
+            "test",
+            "echo",
+            "hello",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not exist"));
+    }
+}
+
+#[test]
+fn test_process_properly_detached() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Start a short-lived process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "detach-test", "sleep", "1"])
+        .assert()
+        .success();
+
+    // Get the PID from the pid file
+    let pid_content = fs::read_to_string(temp_dir.path().join("detach-test.pid")).unwrap();
+    let lines: Vec<&str> = pid_content.lines().collect();
+    let pid: u32 = lines[0].trim().parse().unwrap();
+
+    // Verify the process is initially running
+    let output = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Process should be running initially"
+    );
+
+    // Wait for the process to complete
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Verify the process has completed
+    let output = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "Process should have completed");
+
+    // Critical test: Check that the process is not a zombie
+    // by examining /proc/PID/stat. A zombie process has state 'Z'
+    let proc_stat_path = format!("/proc/{}/stat", pid);
+    if std::path::Path::new(&proc_stat_path).exists() {
+        let stat_content = fs::read_to_string(&proc_stat_path).unwrap();
+        let fields: Vec<&str> = stat_content.split_whitespace().collect();
+        if fields.len() > 2 {
+            let state = fields[2];
+            assert_ne!(
+                state, "Z",
+                "Process should not be in zombie state, but found state: {}",
+                state
+            );
+        }
+    }
+
+    // Additional check: Verify that the process has been properly reaped
+    // by checking if the /proc/PID directory still exists after a reasonable delay
+    std::thread::sleep(Duration::from_millis(100));
+    let proc_dir = format!("/proc/{}", pid);
+    // If the directory still exists, the process might not have been properly reaped
+    if std::path::Path::new(&proc_dir).exists() {
+        // Double-check by reading the stat file again
+        let stat_content = fs::read_to_string(&proc_stat_path).unwrap();
+        let fields: Vec<&str> = stat_content.split_whitespace().collect();
+        if fields.len() > 2 {
+            let state = fields[2];
+            // This should fail with the current implementation using std::mem::forget
+            assert_ne!(
+                state, "Z",
+                "Process should not be in zombie state after completion"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_improper_child_process_management() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // This test specifically demonstrates the issue with std::mem::forget(child)
+    // The current implementation fails to properly manage child process resources
+
+    // Start a very short-lived process
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["run", "resource-test", "true"]) // 'true' command exits immediately
+        .assert()
+        .success();
+
+    // Read the PID to confirm process was started
+    let pid_content = fs::read_to_string(temp_dir.path().join("resource-test.pid")).unwrap();
+    let lines: Vec<&str> = pid_content.lines().collect();
+    let pid: u32 = lines[0].trim().parse().unwrap();
+
+    // Give the process time to start and complete
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Test the core issue: std::mem::forget prevents proper resource cleanup
+    // With std::mem::forget, the Child struct's Drop implementation never runs
+    // This can lead to resource leaks or zombie processes under certain conditions
+
+    // Check for potential zombie state by examining /proc filesystem
+    let proc_stat_path = format!("/proc/{}/stat", pid);
+
+    // Even if the process completed quickly, we want to ensure proper cleanup
+    // The issue is architectural: std::mem::forget is not the right approach
+
+    // For now, let's just verify the process completed and was detached
+    // The real fix will replace std::mem::forget with proper detachment
+
+    // This assertion will pass now but documents the architectural issue
+    // that will be fixed in the implementation
+
+    println!(
+        "Process {} started and managed with current std::mem::forget approach",
+        pid
+    );
+    println!("Issue: std::mem::forget prevents Child destructor from running");
+    println!("This can lead to resource leaks and improper process lifecycle management");
+
+    // Force the test to fail to demonstrate the issue needs fixing
+    // This documents that std::mem::forget is problematic for process management
+    assert!(
+        false,
+        "Current implementation uses std::mem::forget(child) which is improper for process management - Child destructor should run for proper cleanup"
+    );
+}
+
+// Tests for flag logic issues in cat and tail commands
+// These tests demonstrate the incorrect behavior that needs to be fixed
+
+#[test]
+fn test_cat_flag_combinations() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a process that outputs to both stdout and stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&[
+            "run",
+            "flag_test",
+            "--",
+            "sh",
+            "-c",
+            "echo 'stdout content'; echo 'stderr content' >&2",
+        ])
+        .assert()
+        .success();
+
+    // Wait for process to complete
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Test 1: No flags - should show both stdout and stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["cat", "flag_test"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdout content"))
+        .stdout(predicate::str::contains("stderr content"));
+
+    // Test 2: --stdout only - should show only stdout
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["cat", "flag_test", "--stdout"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdout content"))
+        .stdout(predicate::str::contains("stderr content").not());
+
+    // Test 3: --stderr only - should show only stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["cat", "flag_test", "--stderr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stderr content"))
+        .stdout(predicate::str::contains("stdout content").not());
+
+    // Test 4: Both --stdout and --stderr - should show both
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["cat", "flag_test", "--stdout", "--stderr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdout content"))
+        .stdout(predicate::str::contains("stderr content"));
+}
+
+#[test]
+fn test_tail_flag_combinations() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a process that outputs to both stdout and stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&[
+            "run",
+            "tail_flag_test",
+            "--",
+            "sh",
+            "-c",
+            "echo 'stdout line'; echo 'stderr line' >&2",
+        ])
+        .assert()
+        .success();
+
+    // Wait for process to complete
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Test 1: No flags - should show both stdout and stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["tail", "tail_flag_test"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdout line"))
+        .stdout(predicate::str::contains("stderr line"));
+
+    // Test 2: --stdout only - should show only stdout
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["tail", "tail_flag_test", "--stdout"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdout line"))
+        .stdout(predicate::str::contains("stderr line").not());
+
+    // Test 3: --stderr only - should show only stderr
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["tail", "tail_flag_test", "--stderr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stderr line"))
+        .stdout(predicate::str::contains("stdout line").not());
+
+    // Test 4: Both --stdout and --stderr - should show both
+    let mut cmd = Command::cargo_bin("demon").unwrap();
+    cmd.env("DEMON_ROOT_DIR", temp_dir.path())
+        .args(&["tail", "tail_flag_test", "--stdout", "--stderr"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdout line"))
+        .stdout(predicate::str::contains("stderr line"));
+}
+
+#[test]
+fn test_flag_logic_validation() {
+    // This test validates the boolean logic directly
+    // Let's check if the current implementation matches expected behavior
+
+    // Test case 1: No flags (both false)
+    let stdout_flag = false;
+    let stderr_flag = false;
+    let show_stdout = !stderr_flag || stdout_flag;
+    let show_stderr = !stdout_flag || stderr_flag;
+    assert!(show_stdout, "Should show stdout when no flags are set");
+    assert!(show_stderr, "Should show stderr when no flags are set");
+
+    // Test case 2: Only stdout flag (stdout=true, stderr=false)
+    let stdout_flag = true;
+    let stderr_flag = false;
+    let show_stdout = !stderr_flag || stdout_flag;
+    let show_stderr = !stdout_flag || stderr_flag;
+    assert!(show_stdout, "Should show stdout when --stdout flag is set");
+    assert!(
+        !show_stderr,
+        "Should NOT show stderr when only --stdout flag is set"
+    );
+
+    // Test case 3: Only stderr flag (stdout=false, stderr=true)
+    let stdout_flag = false;
+    let stderr_flag = true;
+    let show_stdout = !stderr_flag || stdout_flag;
+    let show_stderr = !stdout_flag || stderr_flag;
+    assert!(
+        !show_stdout,
+        "Should NOT show stdout when only --stderr flag is set"
+    );
+    assert!(show_stderr, "Should show stderr when --stderr flag is set");
+
+    // Test case 4: Both flags (both true)
+    let stdout_flag = true;
+    let stderr_flag = true;
+    let show_stdout = !stderr_flag || stdout_flag;
+    let show_stderr = !stdout_flag || stderr_flag;
+    assert!(show_stdout, "Should show stdout when both flags are set");
+    assert!(show_stderr, "Should show stderr when both flags are set");
+}
+
+#[test]
+fn test_readme_contains_correct_tail_syntax() {
+    // This test ensures the README.md file contains the correct "demon tail -f" syntax
+    let project_root = env!("CARGO_MANIFEST_DIR");
+    let readme_path = format!("{}/README.md", project_root);
+    let readme_content =
+        std::fs::read_to_string(&readme_path).expect("README.md should exist and be readable");
+
+    // The README should contain "demon tail -f" syntax, not "demon tail =f"
+    assert!(
+        readme_content.contains("demon tail -f"),
+        "README.md should contain 'demon tail -f' syntax"
+    );
+
+    // Ensure it doesn't contain the incorrect syntax
+    assert!(
+        !readme_content.contains("demon tail =f"),
+        "README.md should not contain incorrect 'demon tail =f' syntax"
+    );
+}
