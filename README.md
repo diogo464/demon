@@ -103,7 +103,7 @@ demon tail -f web-server
 demon tail -f web-server --stdout
 
 # Follow only stderr  
-demon tail =f web-server --stderr
+demon tail -f web-server --stderr
 ```
 
 ### `demon cat <id> [--stdout] [--stderr]`
